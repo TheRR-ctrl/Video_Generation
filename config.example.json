@@ -1,0 +1,29 @@
+{
+  "carpeta_salida": "Videos Creados",
+
+  "canales_referencia": [
+    "https://www.youtube.com/watch?v=ca-eycdLnaY",
+    "https://www.youtube.com/watch?v=Sg-YTj9jGQY"
+  ],
+  "videos_por_canal_referencia": 15,
+  "dias_plan_contenido": 30,
+
+  "voz_masculina": "Charon",
+  "voz_femenina": "Kore",
+  "genero_narrador": "masculino",
+
+  "duracion_min_video_seg": 240,
+  "duracion_max_video_seg": 1200,
+  "aspecto_video": "16:9",
+  "duracion_clip_veo_seg": 8,
+
+  "modelo_texto": "gemini-3.6-flash",
+  "modelo_tts": "gemini-2.5-flash-preview-tts",
+  "modelo_veo": "veo-3.0-generate-001",
+  "modelo_revision": "gemini-3.5-flash-lite",
+
+  "categoria_youtube": "27",
+  "buffer_horas_revision": 12,
+
+  "reintentar_existentes": false
+}

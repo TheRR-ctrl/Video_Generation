@@ -1,0 +1,5 @@
+requests
+google-genai
+pillow
+google-api-python-client
+google-auth-oauthlib
