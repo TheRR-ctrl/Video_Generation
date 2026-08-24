@@ -541,6 +541,12 @@ def renderizar_lote_historias(archivo="guion.txt"):
         print("🎉 ¡PROCESAMIENTO POR LOTE COMPLETADO SIN ERRORES!")
     print("--------------------------------------------------")
 
+    if fallidos:
+        # Sin esto, pipeline.py reporta la etapa como OK aunque 0 videos se
+        # hayan generado (renderizar_una_historia ya atrapa sus propios
+        # errores por día, así que aquí no hay excepción que se propague sola).
+        raise RuntimeError(f"{len(fallidos)} día(s) fallaron al renderizar. Ver detalle arriba.")
+
 
 if __name__ == "__main__":
     renderizar_lote_historias()
