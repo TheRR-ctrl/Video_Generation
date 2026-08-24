@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
+from gemini_utils import llamar_con_reintentos
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -142,7 +143,8 @@ Recibes el título/hook y el guion completo de un video ya renderizado, y debes:
 
 def revisar_y_generar_metadata(client, modelo, titulo, cuerpo):
     prompt = f"Título/hook: {titulo}\n\nGuion:\n{cuerpo[:4000]}"
-    response = client.models.generate_content(
+    response = llamar_con_reintentos(
+        client.models.generate_content,
         model=modelo,
         contents=prompt,
         config=genai_types.GenerateContentConfig(

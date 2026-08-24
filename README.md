@@ -49,10 +49,12 @@ reutilizan/omiten, así que una corrida interrumpida retoma donde quedó.
 pip install -r requirements.txt
 ```
 
-Copia `config.example.json` a `config.json` y ajusta al menos
-`canales_referencia` (URLs de YouTube de canales similares al que quieres
-crear) y `carpeta_salida`. Nunca commitees `config.json`, `client_secret.json`
-ni `youtube_token.json` — ver `.gitignore`.
+`config.json` ya está commiteado en el repo con valores por defecto (no
+contiene secretos, solo canales de referencia, voces, duraciones, etc. —
+las credenciales van aparte, por variable de entorno o archivo gitignoreado).
+Ajusta ahí al menos `canales_referencia` (URLs de YouTube de canales
+similares al que quieres crear) y `carpeta_salida`. Nunca commitees
+`client_secret.json` ni `youtube_token.json` — ver `.gitignore`.
 
 Variables de entorno:
 
@@ -101,8 +103,17 @@ python pipeline.py --desde video  # solo video + publicar (guion.txt ya debe exi
 
 ## Automatizando (cron / GitHub Actions)
 
-Igual que en `video-scout-pipeline`: `python pipeline.py` en un cron/Tarea
-Programada, o un workflow de GitHub Actions con los secrets
-`YOUTUBE_CLIENT_SECRET`, `YOUTUBE_TOKEN` y `GEMINI_API_KEY`. Ten en cuenta que
-la generación de video con Veo es más lenta que renderizar con clips
-propios — ajusta el timeout del job en consecuencia.
+`.github/workflows/pipeline.yml` corre el pipeline en GitHub Actions. A
+diferencia de `video-scout-pipeline`, **no corre en cron por defecto**: la
+generación de video con Veo tiene costo y toma minutos por escena, así que
+hasta que confirmes cuánto tarda/cuesta un día real, se lanza a mano desde
+la pestaña *Actions* → *Pipeline de contenido* → *Run workflow* (puedes
+elegir hasta qué etapa correr). Cuando quieras automatizarlo del todo,
+descomenta el bloque `schedule` del workflow.
+
+Necesita los mismos tres secrets que `video-scout-pipeline`
+(`Settings` → `Secrets and variables` → `Actions`):
+
+- `GEMINI_API_KEY`
+- `YOUTUBE_CLIENT_SECRET` — contenido completo de `client_secret.json`
+- `YOUTUBE_TOKEN` — contenido completo de `youtube_token.json`

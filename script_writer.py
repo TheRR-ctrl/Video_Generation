@@ -11,12 +11,17 @@ Credenciales: GEMINI_API_KEY (gratis en https://aistudio.google.com/apikey).
 """
 import os
 import re
+import time
 import json
 import logging
 
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
+
+from gemini_utils import llamar_con_reintentos
+
+PAUSA_ENTRE_DIAS_SEG = 5.0  # evita ráfagas de requests que disparen el límite por minuto
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -101,7 +106,8 @@ def escribir_guion_dia(client, modelo, dia):
         f"Duración objetivo: {dia['duracion_objetivo_min']} minutos"
     )
 
-    response = client.models.generate_content(
+    response = llamar_con_reintentos(
+        client.models.generate_content,
         model=modelo,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
@@ -146,6 +152,8 @@ def main():
     bloques = []
 
     for i, dia in enumerate(pendientes, 1):
+        if i > 1:
+            time.sleep(PAUSA_ENTRE_DIAS_SEG)
         logger.info(f"[{i}/{len(pendientes)}] Escribiendo guion del día {dia['dia']}: {dia['titulo_hook'][:60]}...")
         try:
             guion = escribir_guion_dia(client, cfg["modelo_texto"], dia)
