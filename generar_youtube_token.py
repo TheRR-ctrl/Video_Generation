@@ -27,8 +27,11 @@ def main():
         )
 
     flow = InstalledAppFlow.from_client_secrets_file(RUTA_CLIENT_SECRET, SCOPES)
-    print("Abre este link en tu navegador y autoriza el acceso:\n")
-    creds = flow.run_local_server(port=0, open_browser=False)
+    print(
+        "Se va a abrir tu navegador para autorizar el acceso. Si no se abre solo, "
+        "copia el link que se imprime abajo y pégalo a mano:\n"
+    )
+    creds = flow.run_local_server(port=0, open_browser=True)
 
     with open(RUTA_TOKEN, "w", encoding="utf-8") as f:
         f.write(creds.to_json())
