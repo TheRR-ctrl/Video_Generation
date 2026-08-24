@@ -25,6 +25,7 @@ from google import genai
 from google.genai import types as genai_types
 
 import reference_channels
+from gemini_utils import llamar_con_reintentos
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -120,7 +121,8 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
         f"y de los temas ya usados."
     )
 
-    response = client.models.generate_content(
+    response = llamar_con_reintentos(
+        client.models.generate_content,
         model=cfg["modelo_texto"],
         contents=prompt,
         config=genai_types.GenerateContentConfig(
