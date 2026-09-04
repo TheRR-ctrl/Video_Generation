@@ -88,6 +88,17 @@ jobs:
               json.dump(cfg, f, ensure_ascii=False, indent=2)
           "
 
+      - name: Restaurar caché de pipeline_state (persiste clips ya generados entre corridas)
+        uses: actions/cache@v4
+        with:
+          path: |
+            pipeline_state
+            guion.txt
+            Videos Creados
+          key: pipeline-state-${{ github.run_id }}
+          restore-keys: |
+            pipeline-state-
+
       - name: Restaurar credenciales de YouTube
         env:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}

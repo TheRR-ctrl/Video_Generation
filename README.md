@@ -119,6 +119,16 @@ sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run
 workflow** (funciona igual desde la app móvil de GitHub — un par de toques,
 sin terminal).
 
+**Caché entre corridas:** cada corrida del workflow arranca de un checkout
+limpio, así que sin ayuda `pipeline_state/` (los clips ya generados) y
+`guion.txt` se perderían al terminar el job — si una corrida se queda sin
+cuota gratuita a mitad de un video, la siguiente empezaría de cero y
+volvería a gastar cuota en escenas que ya habían salido bien. El workflow
+usa `actions/cache` para persistir `pipeline_state/`, `guion.txt` y
+`Videos Creados/` entre corridas (clave por `run_id` + `restore-keys` para
+recuperar siempre la más reciente), así que reintentar tras un 429 retoma
+justo donde quedó, escena por escena.
+
 ## Motor de narración (`motor_tts` en config.json)
 
 - `"gemini"` (default) — `tts_gemini.py`. La capa gratuita tiene un límite
