@@ -27,6 +27,7 @@ from datetime import timedelta
 
 import env_local  # noqa: F401 (carga .env si existe)
 import tts_gemini
+import tts_edge
 import veo_broll
 import manim_broll
 import hyperframes_broll
@@ -46,6 +47,9 @@ CONFIG_DEFAULT = {
     "modelo_veo": "veo-3.0-generate-001",
     "modelo_texto": "gemini-3.6-flash",
     "motor_broll": "veo",
+    "motor_tts": "gemini",
+    "voz_masculina_edge": tts_edge.VOZ_FALLBACK_MASCULINA,
+    "voz_femenina_edge": tts_edge.VOZ_FALLBACK_FEMENINA,
     "reintentar_existentes": False,
 }
 
@@ -359,7 +363,16 @@ def renderizar_una_historia(bloque, cfg, num=1):
         print(f"\n🎬 [Día {info['dia']}] {info['hook']}  ({len(info['escenas'])} escena(s))")
 
         w, h = RESOLUCIONES.get(cfg["aspecto_video"], RESOLUCIONES["16:9"])
-        voz = cfg["voz_femenina"] if cfg.get("genero_narrador") == "femenino" else cfg["voz_masculina"]
+        motor_tts = cfg.get("motor_tts", "gemini")
+        es_fem = cfg.get("genero_narrador") == "femenino"
+        if motor_tts == "edge":
+            voz = cfg.get("voz_femenina_edge" if es_fem else "voz_masculina_edge") or (
+                tts_edge.VOZ_FALLBACK_FEMENINA if es_fem else tts_edge.VOZ_FALLBACK_MASCULINA
+            )
+            ext_audio = "mp3"
+        else:
+            voz = cfg["voz_femenina"] if es_fem else cfg["voz_masculina"]
+            ext_audio = "wav"
 
         clips_video = []
         rutas_audio = []
@@ -369,9 +382,13 @@ def renderizar_una_historia(bloque, cfg, num=1):
         texto_completo = []
 
         for i, escena in enumerate(info["escenas"], 1):
-            print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución...")
-            ruta_audio = gestor.registrar(f"escena_{i}_audio.wav")
-            if not tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"]):
+            print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución ({motor_tts})...")
+            ruta_audio = gestor.registrar(f"escena_{i}_audio.{ext_audio}")
+            if motor_tts == "edge":
+                audio_ok = tts_edge.generar_audio(escena["texto"], voz, ruta_audio)
+            else:
+                audio_ok = tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"])
+            if not audio_ok:
                 raise RuntimeError(f"No se pudo generar la locución de la escena {i}.")
             dur_escena = medir_duracion_media(ruta_audio)
             if dur_escena <= 0:

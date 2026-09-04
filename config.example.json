@@ -8,8 +8,11 @@
   "videos_por_canal_referencia": 15,
   "dias_plan_contenido": 30,
 
+  "motor_tts": "gemini",
   "voz_masculina": "Charon",
   "voz_femenina": "Kore",
+  "voz_masculina_edge": "es-MX-JorgeNeural",
+  "voz_femenina_edge": "es-MX-DaliaNeural",
   "genero_narrador": "masculino",
 
   "duracion_min_video_seg": 240,

@@ -110,6 +110,22 @@ sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run
 workflow** (funciona igual desde la app móvil de GitHub — un par de toques,
 sin terminal).
 
+## Motor de narración (`motor_tts` en config.json)
+
+- `"gemini"` (default) — `tts_gemini.py`. La capa gratuita tiene un límite
+  duro de **10 solicitudes/día por proyecto** — no alcanza para un solo
+  video de guion largo (20+ escenas), y una suscripción de consumidor tipo
+  Google One/Gemini Advanced **no** sube ese límite (solo lo hace habilitar
+  facturación de pago por uso en el proyecto de la API key).
+- `"edge"` — `tts_edge.py`, usa [edge-tts](https://github.com/rany2/edge-tts)
+  (voces neuronales de Microsoft Edge). Gratis, sin límite diario, mismo
+  motor que ya usa el pipeline hermano `video-scout-pipeline`. Voces por
+  defecto: `voz_masculina_edge` / `voz_femenina_edge` en config.json
+  (`es-MX-JorgeNeural` / `es-MX-DaliaNeural`).
+
+Si el pipeline te está topando con 429 `RESOURCE_EXHAUSTED` en la etapa de
+locución, cambiá `motor_tts` a `"edge"`.
+
 ## Música de fondo (`actualizar_musica.py`)
 
 Igual que en `video-scout-pipeline`: descarga pistas royalty-free de Jamendo

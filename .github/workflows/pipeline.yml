@@ -34,6 +34,12 @@ on:
         default: "veo"
         type: choice
         options: ["veo", "manim", "hyperframes"]
+      motor_tts:
+        description: "Motor de narración (gemini = tope de 10 solicitudes/día gratis; edge = gratis sin límite)"
+        required: false
+        default: "gemini"
+        type: choice
+        options: ["gemini", "edge"]
   # schedule:
   #   - cron: "0 14 * * *"  # todos los días 14:00 UTC — descomenta cuando quieras automatizarlo
 
@@ -63,15 +69,17 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Fijar motor de video de apoyo
+      - name: Fijar motor de video de apoyo y de narración
         env:
           MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'veo' }}
+          MOTOR_TTS: ${{ github.event.inputs.motor_tts || 'gemini' }}
         run: |
           python -c "
           import json, os
           with open('config.json') as f:
               cfg = json.load(f)
           cfg['motor_broll'] = os.environ['MOTOR_BROLL']
+          cfg['motor_tts'] = os.environ['MOTOR_TTS']
           with open('config.json', 'w') as f:
               json.dump(cfg, f, ensure_ascii=False, indent=2)
           "
