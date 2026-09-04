@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 from datetime import timedelta
 
+import env_local  # noqa: F401 (carga .env si existe)
 import tts_gemini
 import veo_broll
 import manim_broll

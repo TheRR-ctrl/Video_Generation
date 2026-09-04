@@ -21,6 +21,8 @@ import re
 import json
 import logging
 
+import env_local  # noqa: F401 (carga .env si existe)
+
 try:
     import requests
 except ImportError:

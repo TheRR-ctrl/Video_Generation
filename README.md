@@ -57,6 +57,13 @@ Ajusta ahí al menos `canales_referencia` (URLs de YouTube de canales
 similares al que quieres crear) y `carpeta_salida`. Nunca commitees
 `client_secret.json` ni `youtube_token.json` — ver `.gitignore`.
 
+**Desarrollo local:** copia `.env.example` a `.env` y completa tus valores
+ahí — cada script lo carga automáticamente (`env_local.py`) antes de leer
+`os.environ`, así no hace falta exportar variables a mano en cada sesión de
+terminal. `.env` nunca se commitea (ver `.gitignore`). En GitHub Actions no
+existe `.env`: las mismas variables llegan como Secrets del repo (ver más
+abajo), así que el mismo código funciona en ambos lugares sin cambios.
+
 Variables de entorno:
 
 - `GEMINI_API_KEY` — gratis en https://aistudio.google.com/apikey. La usan

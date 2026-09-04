@@ -19,6 +19,8 @@ import argparse
 import logging
 import traceback
 
+import env_local  # noqa: F401 (carga .env si existe, antes de cualquier otro import)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("pipeline")
 
