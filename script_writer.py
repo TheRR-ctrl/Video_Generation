@@ -169,8 +169,10 @@ def main():
             logger.warning(f"Fallo inesperado en día {dia['dia']}: {exc}")
 
     if not bloques:
-        logger.error("Ningún día se pudo guionar con éxito.")
-        return
+        # Sin esto, pipeline.py reporta la etapa como OK aunque 0 días se
+        # hayan guionado (los intentos individuales ya atrapan sus propios
+        # errores por día, así que aquí no hay excepción que se propague sola).
+        raise RuntimeError(f"Ningún día se pudo guionar con éxito ({len(pendientes)} pendiente(s)).")
 
     contenido_previo = ""
     if os.path.exists(RUTA_GUION):

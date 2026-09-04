@@ -536,14 +536,17 @@ def renderizar_lote_historias(archivo="guion.txt"):
 
     if not os.path.exists(archivo):
         print(f"❌ Error: No se encontró '{archivo}'.")
-        return
+        # Sin el raise, pipeline.py reporta esta etapa como OK aunque no
+        # haya nada que renderizar (típicamente porque la etapa de guion
+        # falló antes y esta corrida no tiene con qué trabajar).
+        raise RuntimeError(f"No se encontró '{archivo}'.")
 
     with open(archivo, 'r', encoding='utf-8') as f:
         bloques = [h.strip() for h in f.read().split("===NUEVA_HISTORIA===") if h.strip()]
 
     if not bloques:
         print("❌ No se detectaron días de guion.")
-        return
+        raise RuntimeError(f"'{archivo}' no tiene días de guion detectables.")
 
     print(f"📦 Total de días en el guion: {len(bloques)}")
     fallidos = []

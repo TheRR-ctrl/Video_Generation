@@ -158,8 +158,9 @@ def main():
     client = genai.Client()
     nuevos = generar_dias_faltantes(client, cfg, referencias, plan, faltan)
     if not nuevos:
-        logger.error("El modelo no devolvió días nuevos.")
-        return
+        # Sin el raise, pipeline.py reporta esta etapa como OK aunque no se
+        # haya generado ningún día nuevo de plan.
+        raise RuntimeError("El modelo no devolvió días nuevos.")
 
     siguiente_numero = len(plan) + 1
     for i, dia in enumerate(nuevos):
