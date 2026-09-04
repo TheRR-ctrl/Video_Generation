@@ -28,6 +28,12 @@ on:
         default: "publicar"
         type: choice
         options: ["plan", "guion", "video", "publicar"]
+      motor_broll:
+        description: "Motor de video de apoyo (veo = IA generativa de pago, manim = animación por código, gratis)"
+        required: false
+        default: "veo"
+        type: choice
+        options: ["veo", "manim"]
   # schedule:
   #   - cron: "0 14 * * *"  # todos los días 14:00 UTC — descomenta cuando quieras automatizarlo
 
@@ -39,8 +45,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Instalar ffmpeg y dependencias nativas de Manim
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -49,6 +57,19 @@ jobs:
 
       - name: Instalar dependencias
         run: pip install -r requirements.txt
+
+      - name: Fijar motor de video de apoyo
+        env:
+          MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'veo' }}
+        run: |
+          python -c "
+          import json, os
+          with open('config.json') as f:
+              cfg = json.load(f)
+          cfg['motor_broll'] = os.environ['MOTOR_BROLL']
+          with open('config.json', 'w') as f:
+              json.dump(cfg, f, ensure_ascii=False, indent=2)
+          "
 
       - name: Restaurar credenciales de YouTube
         env:

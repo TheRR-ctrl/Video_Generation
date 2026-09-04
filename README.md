@@ -29,11 +29,12 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
    completo dividido en escenas (guion + prompt visual en inglés por escena,
    para el clip de Veo de esa escena). Salida: `guion.txt`.
 3. **`generar_video_maestro.py`** — por cada escena: genera la locución
-   (`tts_gemini.py`), genera/recicla el clip de video de apoyo
-   (`veo_broll.py`, con caché por prompt en `pipeline_state/veo_cache/`),
-   ajusta el clip a la duración real del audio, arma subtítulos karaoke y
-   mezcla música de fondo. Concatena todas las escenas del día en un video
-   final con ffmpeg. Salida: `pipeline_state/resultado_lote.json`.
+   (`tts_gemini.py`), genera/recicla el clip de video de apoyo según
+   `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo, o
+   `manim_broll.py` con animación por código — ver abajo), ajusta el clip a
+   la duración real del audio, arma subtítulos karaoke y mezcla música de
+   fondo. Concatena todas las escenas del día en un video final con ffmpeg.
+   Salida: `pipeline_state/resultado_lote.json`.
 4. **`publisher.py`** — chequeo técnico + chequeo de contenido (Gemini), sube
    el video a YouTube como **privado**, programado para publicarse solo tras
    una ventana de revisión manual. La descripción siempre declara que el
@@ -71,6 +72,27 @@ Los nombres de modelo (`modelo_texto`, `modelo_tts`, `modelo_veo`,
 modelo de Gemini cambian con el tiempo — confirma los vigentes en
 [ai.google.dev](https://ai.google.dev/gemini-api/docs/models) antes de correr
 el pipeline por primera vez.
+
+## Motor de video de apoyo (`motor_broll` en config.json)
+
+- `"veo"` (default) — Gemini Veo genera video fotorrealista por escena, de
+  pago y lento (minutos por clip).
+- `"manim"` — `manim_broll.py` le pide a Gemini el *código* de una escena de
+  [Manim](https://www.manim.community/) (motion graphics: líneas, formas,
+  texto, estilo grid neón sobre fondo oscuro) y la renderiza localmente.
+  Gratis, determinista (mismo prompt → mismo resultado, cacheado en
+  `pipeline_state/manim_cache/`) e ideal para nichos de explicador visual
+  (matemáticas, física, espacio) en vez de video realista. Requiere las
+  dependencias nativas de Manim (Cairo, Pango) — ya instaladas en el
+  workflow de GitHub Actions; en local: `apt install libcairo2-dev
+  libpango1.0-dev pkg-config` (Debian/Ubuntu) antes de `pip install -r
+  requirements.txt`.
+
+El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
+`motor_broll` como input de `workflow_dispatch`, así que se puede elegir
+sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run
+workflow** (funciona igual desde la app móvil de GitHub — un par de toques,
+sin terminal).
 
 ## Música de fondo (`actualizar_musica.py`)
 
