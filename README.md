@@ -89,11 +89,20 @@ el pipeline por primera vez.
   texto, estilo grid neón sobre fondo oscuro) y la renderiza localmente.
   Gratis, determinista (mismo prompt → mismo resultado, cacheado en
   `pipeline_state/manim_cache/`) e ideal para nichos de explicador visual
-  (matemáticas, física, espacio) en vez de video realista. Requiere las
-  dependencias nativas de Manim (Cairo, Pango) — ya instaladas en el
+  con geometría/matemática exacta (órbitas, gráficas, escalas). Requiere
+  las dependencias nativas de Manim (Cairo, Pango) — ya instaladas en el
   workflow de GitHub Actions; en local: `apt install libcairo2-dev
   libpango1.0-dev pkg-config` (Debian/Ubuntu) antes de `pip install -r
   requirements.txt`.
+- `"hyperframes"` — `hyperframes_broll.py` le pide a Gemini el *HTML* de una
+  composición de [HyperFrames](https://github.com/heygen-com/hyperframes)
+  (HTML + CSS + GSAP → mp4 vía Chrome headless) y la renderiza localmente
+  con `npx hyperframes`. Mismo trato que Manim (gratis, determinista,
+  cacheado en `pipeline_state/hyperframes_cache/`), pero mejor para motion
+  graphics tipo "anuncio" (texto kinético, transiciones, formas animadas
+  con easings declarativos) que para geometría exacta. Usa GSAP vendorizado
+  en `vendor/gsap.min.js` (no CDN, para que el render no dependa de red).
+  Requiere Node.js 22+ — ya configurado en el workflow de GitHub Actions.
 
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir

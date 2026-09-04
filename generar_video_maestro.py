@@ -29,6 +29,7 @@ import env_local  # noqa: F401 (carga .env si existe)
 import tts_gemini
 import veo_broll
 import manim_broll
+import hyperframes_broll
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -380,6 +381,10 @@ def renderizar_una_historia(bloque, cfg, num=1):
             print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
             if motor == "manim":
                 ruta_clip_base = manim_broll.generar_clip_cacheado(
+                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
+                )
+            elif motor == "hyperframes":
+                ruta_clip_base = hyperframes_broll.generar_clip_cacheado(
                     escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
                 )
             else:
