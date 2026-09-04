@@ -19,6 +19,7 @@ Credenciales: GEMINI_API_KEY (mismo que el resto del pipeline).
 """
 import os
 import re
+import json
 import glob
 import shutil
 import hashlib
@@ -27,11 +28,17 @@ import tempfile
 import subprocess
 
 from google import genai
+from google.genai import types as genai_types
 
 import gemini_utils
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
 VERSION_CLI = "0.8.27"
+# La capa gratuita de Gemini limita las solicitudes de generate_content por
+# día (no solo por minuto): pedir el HTML de varias escenas en una sola
+# llamada, en vez de una llamada por escena, es lo que hace viable generar
+# un video completo (20+ escenas) sin agotar esa cuota. Ver TAM_LOTE_DEFAULT.
+TAM_LOTE_DEFAULT = 5
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
@@ -77,6 +84,16 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
   determinista, mismo resultado en cada frame sin importar el orden en que
   se pidan).
 - No hay narración: el video es puramente visual, de {duracion} segundos.
+"""
+
+_PROMPT_SISTEMA_LOTE = _PROMPT_SISTEMA + """
+Vas a generar {n} composiciones distintas, una por cada escena listada abajo
+(cada una es un video independiente, no una sola composición larga).
+
+Responde ÚNICAMENTE con un array JSON de exactamente {n} strings, en el
+mismo orden que las escenas. Cada string es el HTML completo de una
+composición (empezando literalmente en "<!doctype html>"). Sin texto antes
+o después del array, sin markdown.
 """
 
 
@@ -125,6 +142,31 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     if "id=\"root\"" not in html or "__timelines" not in html:
         raise ValueError("La respuesta de Gemini no cumple el contrato de HyperFrames.")
     return html
+
+
+def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
+    ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+    n = len(prompts_visuales)
+    instrucciones = _PROMPT_SISTEMA_LOTE.format(duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, n=n)
+    lista_escenas = "\n".join(
+        f"{i}. {p} (no la copies literal, interprétala visualmente)"
+        for i, p in enumerate(prompts_visuales, 1)
+    )
+    respuesta = gemini_utils.llamar_con_reintentos(
+        cliente.models.generate_content,
+        model=modelo,
+        contents=f"{instrucciones}\n\nEscenas:\n{lista_escenas}",
+        config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+    )
+    datos = json.loads(respuesta.text or "[]")
+    if not isinstance(datos, list) or len(datos) != n:
+        raise ValueError(f"Se esperaban {n} composiciones en el array JSON, llegaron {datos if not isinstance(datos, list) else len(datos)}.")
+
+    htmls = [_limpiar_html(h) for h in datos]
+    for html in htmls:
+        if "id=\"root\"" not in html or "__timelines" not in html:
+            raise ValueError("Una composición del lote no cumple el contrato de HyperFrames.")
+    return htmls
 
 
 def _renderizar_composicion(html, ruta_salida):
@@ -176,3 +218,47 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
             logger.warning(f"HyperFrames intento {intento}/{reintentos} falló: {exc}")
 
     return None
+
+
+def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
+                                  tam_lote=TAM_LOTE_DEFAULT, reintentos=2):
+    """Genera clips para una lista de prompts (una por escena), agrupando las
+    llamadas a Gemini de a `tam_lote` escenas por solicitud en vez de una por
+    escena. Devuelve una lista de rutas alineada con prompts_visuales (None
+    en las posiciones que fallaron tras los reintentos).
+
+    Cada reintento solo vuelve a pedir las escenas que aún faltan (ya sea
+    porque el lote completo falló, o porque el render de una escena puntual
+    del lote falló) — así un fallo aislado no gasta una llamada extra en
+    escenas que ya salieron bien."""
+    rutas = [None] * len(prompts_visuales)
+    for i, prompt in enumerate(prompts_visuales):
+        ruta = _ruta_cache(prompt, aspecto)
+        if _archivo_valido(ruta):
+            rutas[i] = ruta
+
+    cliente = _obtener_cliente()
+    for intento in range(1, reintentos + 1):
+        pendientes = [(i, p) for i, p in enumerate(prompts_visuales) if rutas[i] is None]
+        if not pendientes:
+            break
+
+        for inicio in range(0, len(pendientes), tam_lote):
+            lote = pendientes[inicio:inicio + tam_lote]
+            indices, prompts_lote = zip(*lote)
+            try:
+                htmls = _generar_composiciones_lote(cliente, list(prompts_lote), aspecto, modelo)
+            except Exception as exc:
+                logger.warning(f"Lote HyperFrames (intento {intento}/{reintentos}, escenas {list(indices)}) falló al generar HTML: {exc}")
+                continue
+
+            for idx, prompt, html in zip(indices, prompts_lote, htmls):
+                ruta_salida = _ruta_cache(prompt, aspecto)
+                try:
+                    _renderizar_composicion(html, ruta_salida)
+                    if _archivo_valido(ruta_salida):
+                        rutas[idx] = ruta_salida
+                except Exception as exc:
+                    logger.warning(f"Render de la escena {idx} (lote) falló: {exc}")
+
+    return rutas

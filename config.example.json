@@ -21,6 +21,7 @@
   "duracion_clip_veo_seg": 8,
 
   "motor_broll": "veo",
+  "tam_lote_hyperframes": 5,
 
   "modelo_texto": "gemini-3.6-flash",
   "modelo_tts": "gemini-2.5-flash-preview-tts",

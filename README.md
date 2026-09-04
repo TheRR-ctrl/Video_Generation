@@ -104,6 +104,15 @@ el pipeline por primera vez.
   en `vendor/gsap.min.js` (no CDN, para que el render no dependa de red).
   Requiere Node.js 22+ — ya configurado en el workflow de GitHub Actions.
 
+  **Generación por lotes** (`tam_lote_hyperframes`, default 5): en vez de
+  una llamada a Gemini por escena, pide el HTML de `tam_lote_hyperframes`
+  escenas en una sola llamada (respuesta JSON con un array de composiciones).
+  Con un guion de 27 escenas, esto baja de ~27 llamadas de texto a ~6 —
+  clave porque el tier gratuito de Gemini limita las solicitudes/día del
+  modelo de texto (no solo las de TTS o Veo), y un video completo con el
+  motor "de a una por escena" agota esa cuota antes de terminar. Un reintento
+  solo vuelve a pedir las escenas que fallaron, no el lote entero.
+
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir
 sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run

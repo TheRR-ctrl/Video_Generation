@@ -374,6 +374,16 @@ def renderizar_una_historia(bloque, cfg, num=1):
             voz = cfg["voz_femenina"] if es_fem else cfg["voz_masculina"]
             ext_audio = "wav"
 
+        motor = cfg.get("motor_broll", "veo")
+        rutas_broll_lote = None
+        if motor == "hyperframes":
+            prompts_visuales = [e["visual"] for e in info["escenas"]]
+            print(f" ├─ 🎞️ Generando {len(prompts_visuales)} video(s) de apoyo en lotes (hyperframes)...")
+            rutas_broll_lote = hyperframes_broll.generar_clips_lote_cacheados(
+                prompts_visuales, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"],
+                tam_lote=cfg.get("tam_lote_hyperframes", hyperframes_broll.TAM_LOTE_DEFAULT),
+            )
+
         clips_video = []
         rutas_audio = []
         lineas_srt = []
@@ -394,16 +404,13 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if dur_escena <= 0:
                 raise RuntimeError(f"Duración inválida en el audio de la escena {i}.")
 
-            motor = cfg.get("motor_broll", "veo")
             print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
             if motor == "manim":
                 ruta_clip_base = manim_broll.generar_clip_cacheado(
                     escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
                 )
             elif motor == "hyperframes":
-                ruta_clip_base = hyperframes_broll.generar_clip_cacheado(
-                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
-                )
+                ruta_clip_base = rutas_broll_lote[i - 1]
             else:
                 ruta_clip_base = veo_broll.generar_clip_cacheado(
                     escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
