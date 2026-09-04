@@ -69,6 +69,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Precalentar HyperFrames (descarga el paquete y su Chromium una sola vez)
+        if: ${{ github.event.inputs.motor_broll == 'hyperframes' }}
+        run: npx --yes hyperframes@0.8.27 --version
+
       - name: Fijar motor de video de apoyo y de narración
         env:
           MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'veo' }}

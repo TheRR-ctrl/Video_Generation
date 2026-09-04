@@ -36,7 +36,11 @@ CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipel
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
 DURACION_ESCENA_SEG = 8
-TIMEOUT_RENDER_SEG = 180
+# Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
+# `npx hyperframes@version` tiene que descargar el paquete completo (incluye
+# un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
+# tarda ~20-30s (ver prueba local); esto solo cubre ese arranque en frío.
+TIMEOUT_RENDER_SEG = 600
 
 RESOLUCIONES = {
     "16:9": (1920, 1080),
