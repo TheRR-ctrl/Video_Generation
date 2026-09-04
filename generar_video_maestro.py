@@ -25,8 +25,10 @@ import subprocess
 import tempfile
 from datetime import timedelta
 
+import env_local  # noqa: F401 (carga .env si existe)
 import tts_gemini
 import veo_broll
+import manim_broll
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -41,6 +43,8 @@ CONFIG_DEFAULT = {
     "aspecto_video": "16:9",
     "modelo_tts": "gemini-2.5-flash-preview-tts",
     "modelo_veo": "veo-3.0-generate-001",
+    "modelo_texto": "gemini-3.6-flash",
+    "motor_broll": "veo",
     "reintentar_existentes": False,
 }
 
@@ -372,10 +376,16 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if dur_escena <= 0:
                 raise RuntimeError(f"Duración inválida en el audio de la escena {i}.")
 
-            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo (Veo)...")
-            ruta_clip_base = veo_broll.generar_clip_cacheado(
-                escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
-            )
+            motor = cfg.get("motor_broll", "veo")
+            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
+            if motor == "manim":
+                ruta_clip_base = manim_broll.generar_clip_cacheado(
+                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
+                )
+            else:
+                ruta_clip_base = veo_broll.generar_clip_cacheado(
+                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
+                )
             if not ruta_clip_base:
                 raise RuntimeError(f"No se pudo generar el video de apoyo de la escena {i}.")
 

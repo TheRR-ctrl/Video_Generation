@@ -14,6 +14,8 @@ import sys
 import subprocess
 import webbrowser
 
+import env_local  # noqa: F401 (carga .env si existe)
+
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

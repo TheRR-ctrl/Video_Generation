@@ -15,6 +15,8 @@ import time
 import json
 import logging
 
+import env_local  # noqa: F401 (carga .env si existe)
+
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors

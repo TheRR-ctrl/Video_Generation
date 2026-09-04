@@ -17,6 +17,8 @@
   "aspecto_video": "16:9",
   "duracion_clip_veo_seg": 8,
 
+  "motor_broll": "veo",
+
   "modelo_texto": "gemini-3.6-flash",
   "modelo_tts": "gemini-2.5-flash-preview-tts",
   "modelo_veo": "veo-3.1-generate-preview",
