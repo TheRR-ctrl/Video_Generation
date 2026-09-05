@@ -89,7 +89,7 @@ jobs:
           "
 
       - name: Restaurar caché de pipeline_state (persiste clips ya generados entre corridas)
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             pipeline_state
@@ -121,3 +121,13 @@ jobs:
             pipeline_state/
             guion.txt
           retention-days: 14
+
+      - name: Guardar caché de pipeline_state (aunque el pipeline haya fallado)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pipeline_state
+            guion.txt
+            Videos Creados
+          key: pipeline-state-${{ github.run_id }}

@@ -124,10 +124,15 @@ limpio, así que sin ayuda `pipeline_state/` (los clips ya generados) y
 `guion.txt` se perderían al terminar el job — si una corrida se queda sin
 cuota gratuita a mitad de un video, la siguiente empezaría de cero y
 volvería a gastar cuota en escenas que ya habían salido bien. El workflow
-usa `actions/cache` para persistir `pipeline_state/`, `guion.txt` y
-`Videos Creados/` entre corridas (clave por `run_id` + `restore-keys` para
-recuperar siempre la más reciente), así que reintentar tras un 429 retoma
-justo donde quedó, escena por escena.
+usa `actions/cache/restore` + `actions/cache/save` (por separado, no la
+acción combinada `actions/cache`) para persistir `pipeline_state/`,
+`guion.txt` y `Videos Creados/` entre corridas — clave por `run_id` +
+`restore-keys` para recuperar siempre la más reciente. Importante: el paso
+de guardado usa `if: always()` a propósito, porque la acción combinada
+`actions/cache` solo guarda cuando el job termina en éxito (`post-if:
+success()` en su definición) — como este pipeline casi siempre "falla" al
+toparse con la cuota a mitad de un video, con la acción combinada nunca se
+guardaría nada del progreso real ya hecho.
 
 ## Motor de narración (`motor_tts` en config.json)
 
