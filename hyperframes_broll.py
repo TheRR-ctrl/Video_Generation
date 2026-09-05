@@ -322,6 +322,25 @@ def _clip_tiene_contenido(ruta_clip):
     return False
 
 
+def _clip_cacheado_utilizable(ruta_clip):
+    """Un clip de la caché sirve solo si además de existir muestra algo. La
+    caché sobrevive entre corridas (ver el workflow), así que sin esto un clip
+    que salió vacío se reusaría para siempre: la validación del render nunca
+    volvería a correr sobre él. Cuando no sirve se borra, y la escena se
+    regenera en esta misma corrida."""
+    if not _archivo_valido(ruta_clip):
+        return False
+    if _clip_tiene_contenido(ruta_clip):
+        return True
+
+    logger.warning(f"Clip cacheado vacío, se descarta y se regenera: {ruta_clip}")
+    try:
+        os.remove(ruta_clip)
+    except OSError as exc:
+        logger.warning(f"No se pudo borrar el clip vacío {ruta_clip}: {exc}")
+    return False
+
+
 def _renderizar_composicion(html, ruta_salida):
     if not _archivo_valido(RUTA_GSAP_VENDOR):
         raise RuntimeError(f"No se encontró {RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
@@ -365,7 +384,7 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
     la ruta local a un clip de video para el prompt dado (generado con
     HyperFrames), o None si falló tras los reintentos."""
     ruta_salida = _ruta_cache(prompt_visual, aspecto)
-    if _archivo_valido(ruta_salida):
+    if _clip_cacheado_utilizable(ruta_salida):
         return ruta_salida
 
     cliente = _obtener_cliente()
@@ -395,7 +414,7 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
     rutas = [None] * len(prompts_visuales)
     for i, prompt in enumerate(prompts_visuales):
         ruta = _ruta_cache(prompt, aspecto)
-        if _archivo_valido(ruta):
+        if _clip_cacheado_utilizable(ruta):
             rutas[i] = ruta
 
     cliente = _obtener_cliente()
