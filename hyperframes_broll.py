@@ -469,7 +469,8 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
     Cada reintento solo vuelve a pedir las escenas que aún faltan (ya sea
     porque el lote completo falló, o porque el render de una escena puntual
     del lote falló) — así un fallo aislado no gasta una llamada extra en
-    escenas que ya salieron bien."""
+    escenas que ya salieron bien. Lo que sigue sin clip después de todos los
+    lotes se reintenta escena por escena antes de darse por vencido."""
     rutas = [None] * len(prompts_visuales)
     for i, prompt in enumerate(prompts_visuales):
         ruta = _ruta_cache(prompt, aspecto)
@@ -499,5 +500,16 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
                         rutas[idx] = ruta_salida
                 except Exception as exc:
                     logger.warning(f"Render de la escena {idx} (lote) falló: {exc}")
+
+    # Rescate uno a uno de lo que quedó sin clip. Una escena sin video de apoyo
+    # aborta el día entero (ver generar_video_maestro), así que vale la llamada
+    # extra: los fallos que llegan hasta acá suelen ser del lote como formato
+    # —Gemini devolviendo 3 composiciones donde se pidieron 5, o una que no
+    # cumple el contrato— y no de la escena en sí, que pedida sola sale bien.
+    for i, prompt in enumerate(prompts_visuales):
+        if rutas[i] is not None:
+            continue
+        logger.warning(f"Escena {i} sin clip tras los lotes: se reintenta sola.")
+        rutas[i] = generar_clip_cacheado(prompt, aspecto=aspecto, modelo=modelo)
 
     return rutas
