@@ -70,21 +70,31 @@ DURACION_INTRO_CARD_SEG = 3.0
 # las frases a mitad de camino. Estos tres valores son el criterio de siempre:
 # una línea que entre completa, un piso de tiempo para poder leerla, y un techo
 # para que no se quede pegada.
-CARACTERES_MAX_SUBTITULO = 42
-SEGUNDOS_MIN_SUBTITULO = 1.6
+CARACTERES_MAX_SUBTITULO = 26
+SEGUNDOS_MIN_SUBTITULO = 1.0
+# Cuánto texto entra en UNA línea, que no es lo mismo que cuánto texto lleva un
+# bloque: el bloque apunta a 26 caracteres (3-5 palabras, como la referencia),
+# pero cuando queda algo más largo —porque partirlo daría un subtítulo de medio
+# segundo— igual entra en una sola línea. Con la Montserrat Black condensada al
+# 88% y cuerpo 64, 40 caracteres ocupan ~1500px de los 1800 disponibles.
+CARACTERES_MAX_LINEA = 40
 SEGUNDOS_MAX_SUBTITULO = 6.0
 PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
 PUNTUACION_DEBIL = (",", ";")
 # Adelanto del subtítulo respecto de la voz, copiado de video-scout-pipeline.
 ADELANTO_SUBTITULO = timedelta(seconds=0.32)
-# Colores del subtítulo en formato ASS (&HBBGGRR): la frase va en blanco y la
-# palabra que se está diciendo salta a amarillo —el acento de
-# video-scout-pipeline— y crece un poco. El crecimiento es moderado a propósito:
-# al agrandar una palabra la línea se reacomoda, y con 130% el texto entero
-# bailaría en cada palabra.
+# Estilo del subtítulo, calcado del video de referencia que pasó el usuario
+# (docs/referencia-subtitulos.jpg): todo en blanco con contorno negro grueso, y
+# la palabra que se está diciendo se distingue SOLO por tamaño, no por color.
+# Probé antes con la palabra en amarillo y no es eso: en la referencia la línea
+# entera es blanca y lo único que cambia es que la palabra hablada es más
+# grande.
 COLOR_BASE = "&H00FFFFFF&"
-COLOR_RESALTADO = "&H0000FFFF&"
-ESCALA_RESALTADO = 112
+# Tipografía condensada: la referencia usa una itálica pesada y angosta. No hay
+# una así en los repos de Ubuntu (Anton, Oswald), así que se consigue el mismo
+# efecto estrechando Montserrat Black, que ya se instala en el workflow.
+ESCALA_BASE_X = 88
+FACTOR_RESALTADO = 1.35
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
@@ -427,7 +437,7 @@ def _corte_dos_lineas(palabras):
     llenando, la última palabra cae sola abajo ("...EL TRABAJO EN / SÍ.") y se
     lee peor que dos líneas parejas."""
     texto = " ".join(palabras)
-    if len(texto) <= CARACTERES_MAX_SUBTITULO:
+    if len(texto) <= CARACTERES_MAX_LINEA:
         return None
 
     mitad = len(texto) / 2
@@ -466,9 +476,10 @@ def _linea_resaltada(palabras, indice_resaltada, corte):
             partes.append("\\N")
         if j == indice_resaltada:
             partes.append(
-                f"{{\\c{COLOR_RESALTADO}\\fscx{ESCALA_RESALTADO}\\fscy{ESCALA_RESALTADO}}}"
+                f"{{\\fscx{round(ESCALA_BASE_X * FACTOR_RESALTADO)}"
+                f"\\fscy{round(100 * FACTOR_RESALTADO)}}}"
                 f"{palabra.upper()}"
-                f"{{\\c{COLOR_BASE}\\fscx100\\fscy100}} "
+                f"{{\\fscx{ESCALA_BASE_X}\\fscy100}} "
             )
         else:
             partes.append(f"{palabra.upper()} ")
@@ -496,8 +507,11 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         f"BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Karaoke,Montserrat Black,{font_size},{COLOR_BASE},{COLOR_BASE},&H00000000&,&H80000000&,1,0,0,0,"
-        f"100,100,0,0,1,6,2,2,60,60,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
+        # Bold=1 e Italic=1, ScaleX condensado: la itálica pesada y angosta de
+        # la referencia. Contorno 6 y sombra 2, que es lo que la hace legible
+        # sobre cualquier fondo.
+        f"Style: Karaoke,Montserrat Black,{font_size},{COLOR_BASE},{COLOR_BASE},&H00000000&,&H80000000&,1,1,0,0,"
+        f"{ESCALA_BASE_X},100,0,0,1,6,2,2,60,60,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
         f"MarginR, MarginV, Effect, Text\n"
     )
 
