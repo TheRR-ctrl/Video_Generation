@@ -64,10 +64,16 @@ RESOLUCIONES = {
 
 DURACION_INTRO_CARD_SEG = 3.0
 
-# Palabras visibles por bloque de subtítulo. Con 2 el karaoke parpadea (una o
-# dos palabras sueltas por vez, imposible de leer en un video horizontal); 4
-# entra cómodo en una línea a 1920px y deja leer la frase completa.
-PALABRAS_POR_SUBTITULO = 4
+# Reglas de subtitulado. Agrupar de a N palabras fijas dejaba cada bloque 1.4s
+# en pantalla (medido sobre el video terminado: 43 bloques por minuto) y partía
+# las frases a mitad de camino. Estos tres valores son el criterio de siempre:
+# una línea que entre completa, un piso de tiempo para poder leerla, y un techo
+# para que no se quede pegada.
+CARACTERES_MAX_SUBTITULO = 42
+SEGUNDOS_MIN_SUBTITULO = 1.6
+SEGUNDOS_MAX_SUBTITULO = 6.0
+PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
+PUNTUACION_DEBIL = (",", ";")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
@@ -199,15 +205,39 @@ def crear_tarjeta_intro(titulo, output_png, ancho, alto):
 # SUBTÍTULOS KARAOKE (SRT -> ASS)
 # ---------------------------------------------------------
 def formatear_srt_time(segundos):
-    segundos = max(0.0, segundos)
-    horas = int(segundos // 3600)
-    minutos = int((segundos % 3600) // 60)
-    segs = int(segundos % 60)
-    ms = int(round((segundos - int(segundos)) * 1000))
+    """Formatea segundos como HH:MM:SS,mmm.
+
+    Se redondea a milisegundos ENTEROS antes de partir el valor. Redondear
+    después, sobre la parte decimal sola, desbordaba: 3.9996 daba "00:00:03,1000"
+    —cuatro dígitos de milisegundo, un timestamp inválido— y al releerlo daba
+    3.1s, casi un segundo hacia atrás. En el video eso se veía como subtítulos
+    que aparecían un instante y desaparecían, o que se adelantaban a la voz."""
+    total_ms = max(0, int(round(segundos * 1000)))
+    horas, resto = divmod(total_ms, 3600_000)
+    minutos, resto = divmod(resto, 60_000)
+    segs, ms = divmod(resto, 1000)
     return f"{horas:02d}:{minutos:02d}:{segs:02d},{ms:03d}"
 
 
-def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial, palabras_por_bloque=PALABRAS_POR_SUBTITULO):
+def _cierra_bloque(texto_acumulado, texto_siguiente, duracion):
+    """Decide si el bloque acumulado se cierra antes de sumar la palabra
+    siguiente. El orden de las reglas es el que hace que los cortes caigan
+    donde caen las pausas al hablar."""
+    chars = len(texto_acumulado)
+    if chars + 1 + len(texto_siguiente) > CARACTERES_MAX_SUBTITULO:
+        return True  # no entra en una línea legible
+    if duracion >= SEGUNDOS_MAX_SUBTITULO:
+        return True  # ya lleva demasiado en pantalla
+    if duracion < SEGUNDOS_MIN_SUBTITULO:
+        return False  # nunca cortes antes del mínimo legible
+    if texto_acumulado.endswith(PUNTUACION_FUERTE):
+        return True  # fin de oración: el corte natural
+    if texto_acumulado.endswith(PUNTUACION_DEBIL) and chars >= CARACTERES_MAX_SUBTITULO * 0.6:
+        return True  # coma o punto y coma con el bloque ya bien lleno
+    return False
+
+
+def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial):
     """Reusa el SRT que edge-tts escribió para esta escena (marcas de tiempo
     reales por palabra) desplazándolo al lugar que ocupa la escena dentro del
     video completo.
@@ -230,28 +260,56 @@ def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial, palabras_por_b
     if not bloques:
         return [], indice_inicial
 
-    # edge-tts corta un cue por palabra (o por frase corta, según versión). Se
-    # agrupan de a palabras_por_bloque tomando el inicio real del primer cue y
-    # el final real del último: el bloque queda legible en pantalla sin perder
-    # la sincronía con la voz.
-    lineas = []
-    idx = indice_inicial
-    acumulado = []
+    cues = []
     for t_ini_str, t_fin_str, texto in bloques:
         texto = " ".join(texto.split())
         if not texto:
             continue
         t_ini = parse_time(t_ini_str).total_seconds() + offset_seg
         t_fin = parse_time(t_fin_str).total_seconds() + offset_seg
-        if t_fin <= t_ini:
-            continue
+        if t_fin > t_ini:
+            cues.append((t_ini, t_fin, texto))
+
+    return _agrupar_cues_en_bloques(cues, indice_inicial)
+
+
+def _agrupar_cues_en_bloques(cues, indice_inicial):
+    """Agrupa los cues palabra a palabra de edge-tts en bloques legibles.
+
+    Agrupar de a N palabras fijas (lo que se hacía antes) deja el subtítulo
+    1.4s en pantalla y parte las frases donde toque: "QUE HAS ESTADO
+    APLAZANDO", "DE HACERLO TODO PERFECTO,". Acá el corte lo deciden la
+    puntuación, el ancho de línea y un piso de tiempo, que es el criterio de
+    subtitulado de siempre: cortar donde el que habla hace la pausa."""
+    grupos = []
+    acumulado = []
+    for t_ini, t_fin, texto in cues:
+        if acumulado:
+            texto_actual = " ".join(t for _, _, t in acumulado)
+            duracion = acumulado[-1][1] - acumulado[0][0]
+            if _cierra_bloque(texto_actual, texto, duracion):
+                grupos.append(acumulado)
+                acumulado = []
         acumulado.append((t_ini, t_fin, texto))
-        if sum(len(t.split()) for _, _, t in acumulado) >= palabras_por_bloque:
-            lineas.append(_bloque_srt(acumulado, idx))
-            idx += 1
-            acumulado = []
     if acumulado:
-        lineas.append(_bloque_srt(acumulado, idx))
+        grupos.append(acumulado)
+
+    # El último bloque de la escena puede quedar por debajo del mínimo: se cerró
+    # porque se acabó el texto, no porque tocara cortar. Se funde con el
+    # anterior; acá sí se admiten dos líneas (el conversor a ASS las parte),
+    # porque un bloque de dos líneas se lee sin problema y uno de medio segundo
+    # en pantalla no.
+    if len(grupos) >= 2:
+        ultimo, previo = grupos[-1], grupos[-2]
+        dur_ultimo = ultimo[-1][1] - ultimo[0][0]
+        chars = sum(len(t) + 1 for _, _, t in previo + ultimo)
+        if dur_ultimo < SEGUNDOS_MIN_SUBTITULO and chars <= CARACTERES_MAX_SUBTITULO * 2:
+            grupos[-2:] = [previo + ultimo]
+
+    lineas = []
+    idx = indice_inicial
+    for grupo in grupos:
+        lineas.append(_bloque_srt(grupo, idx))
         idx += 1
     return lineas, idx
 
@@ -263,29 +321,25 @@ def _bloque_srt(cues, indice):
     return f"{indice}\n{formatear_srt_time(t_ini)} --> {formatear_srt_time(t_fin)}\n{texto}\n"
 
 
-def generar_bloques_srt_escena(texto, duracion_seg, offset_seg, indice_inicial, palabras_por_grupo=5):
+def generar_bloques_srt_escena(texto, duracion_seg, offset_seg, indice_inicial):
     """Fallback para motores de TTS que no devuelven marcas de tiempo por
-    palabra (Gemini TTS): distribuye el tiempo de cada grupo de palabras
-    proporcionalmente a su longitud dentro de la duración medida del audio."""
+    palabra (Gemini TTS): reparte la duración medida del audio entre las
+    palabras, proporcionalmente a su longitud, y agrupa con el mismo criterio de
+    frase que la ruta buena — así el corte de línea es igual de legible aunque
+    la sincronía sea estimada."""
     palabras = texto.split()
     if not palabras or duracion_seg <= 0:
         return [], indice_inicial
 
-    grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
-    textos_grupo = [" ".join(g) for g in grupos]
-    total_chars = sum(len(t) for t in textos_grupo) or 1
-
-    lineas = []
+    total_chars = sum(len(p) for p in palabras) or 1
+    cues = []
     t_acum = 0.0
-    idx = indice_inicial
-    for texto_g in textos_grupo:
-        dur_g = duracion_seg * (len(texto_g) / total_chars)
-        t_ini = offset_seg + t_acum
-        t_fin = offset_seg + t_acum + dur_g
-        lineas.append(f"{idx}\n{formatear_srt_time(t_ini)} --> {formatear_srt_time(t_fin)}\n{texto_g}\n")
-        t_acum += dur_g
-        idx += 1
-    return lineas, idx
+    for palabra in palabras:
+        dur = duracion_seg * (len(palabra) / total_chars)
+        cues.append((offset_seg + t_acum, offset_seg + t_acum + dur, palabra))
+        t_acum += dur
+
+    return _agrupar_cues_en_bloques(cues, indice_inicial)
 
 
 def parse_time(time_str):
@@ -299,8 +353,29 @@ def format_ass_time(td):
     return f"{ts // 3600}:{(ts % 3600) // 60:02d}:{ts % 60:02d}.{int(td.microseconds / 10000):02d}"
 
 
+def _corte_dos_lineas(palabras):
+    """Índice donde partir el bloque en dos líneas, o None si entra en una.
+
+    Se parte por la mitad en vez de llenar la primera línea hasta el tope:
+    llenando, la última palabra cae sola abajo ("...EL TRABAJO EN / SÍ.") y se
+    lee peor que dos líneas parejas."""
+    texto = " ".join(palabras)
+    if len(texto) <= CARACTERES_MAX_SUBTITULO:
+        return None
+
+    mitad = len(texto) / 2
+    mejor, mejor_dist = None, None
+    ancho = 0
+    for j in range(1, len(palabras)):
+        ancho += len(palabras[j - 1]) + 1
+        dist = abs(ancho - mitad)
+        if mejor_dist is None or dist < mejor_dist:
+            mejor, mejor_dist = j, dist
+    return mejor
+
+
 def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
-    font_size, palabras_por_grupo = (58, PALABRAS_POR_SUBTITULO)
+    font_size = 58
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
@@ -335,17 +410,20 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         if dur_cs <= 0:
             continue
 
-        grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
-        dur_grp = dur_cs // max(1, len(grupos))
-
-        t_act = t_inicio
-        for grupo in grupos:
-            t_sig = t_act + timedelta(seconds=dur_grp / 100.0)
-            texto_karaoke = "".join([f"{{\\k{max(6, dur_grp // len(grupo))}}}{p.upper()} " for p in grupo])
-            lineas_ass.append(
-                f"Dialogue: 0,{format_ass_time(t_act)},{format_ass_time(t_sig)},Karaoke,,0,0,0,,{texto_karaoke.strip()}\n"
-            )
-            t_act = t_sig
+        # Cada cue del SRT ya viene agrupado por frase y con su tiempo real
+        # (ver _agrupar_cues_en_bloques): se respeta tal cual. Volver a partirlo
+        # de a N palabras acá anulaba ese agrupado y devolvía el parpadeo.
+        k_por_palabra = max(6, dur_cs // len(palabras))
+        corte = _corte_dos_lineas(palabras)
+        partes = []
+        for j, p in enumerate(palabras):
+            if j == corte:
+                partes.append("\\N")  # segunda línea: ASS parte acá
+            partes.append(f"{{\\k{k_por_palabra}}}{p.upper()} ")
+        texto_karaoke = "".join(partes).replace(" \\N", "\\N").strip()
+        lineas_ass.append(
+            f"Dialogue: 0,{format_ass_time(t_inicio)},{format_ass_time(t_fin)},Karaoke,,0,0,0,,{texto_karaoke}\n"
+        )
 
     with open(ass_out_path, 'w', encoding='utf-8') as f:
         f.writelines(lineas_ass)
