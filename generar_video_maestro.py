@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import json
+import math
 import shutil
 import random
 import logging
@@ -273,6 +274,55 @@ def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial):
     return _agrupar_cues_en_bloques(cues, indice_inicial)
 
 
+def _partir_cue_largo(t_ini, t_fin, texto):
+    """Parte en varios un cue que no entra en pantalla, repartiendo su tiempo
+    proporcionalmente a los caracteres de cada parte.
+
+    Hace falta porque edge-tts no siempre corta por palabra: según la versión
+    devuelve un cue por FRASE, y una frase entera ocupa el ancho completo del
+    cuadro. Agrupar solo sabe unir cues cortos; sin esto, uno largo pasa de
+    largo tal cual."""
+    palabras = texto.split()
+    duracion = t_fin - t_ini
+    if len(texto) <= CARACTERES_MAX_SUBTITULO or len(palabras) < 2:
+        return [(t_ini, t_fin, texto)]
+
+    # Cuántas partes: las que pida el ancho, salvo que el tiempo no alcance para
+    # que cada una se lea. Si no alcanza, se admiten dos líneas por parte antes
+    # que partes que parpadeen.
+    por_ancho = math.ceil(len(texto) / CARACTERES_MAX_SUBTITULO)
+    por_tiempo = max(1, int(duracion // SEGUNDOS_MIN_SUBTITULO))
+    minimo = math.ceil(len(texto) / (CARACTERES_MAX_SUBTITULO * 2))
+    partes_n = max(minimo, min(por_ancho, por_tiempo))
+    if partes_n < 2:
+        return [(t_ini, t_fin, texto)]
+
+    objetivo = len(texto) / partes_n
+    grupos, actual, ancho = [], [], 0
+    for palabra in palabras:
+        actual.append(palabra)
+        ancho += len(palabra) + 1
+        corta_aqui = ancho >= objetivo and len(grupos) < partes_n - 1
+        # Si la palabra cierra una frase, cortar acá aunque falte poco para el
+        # objetivo: el corte cae en la pausa real.
+        if corta_aqui or (palabra.endswith(PUNTUACION_FUERTE + PUNTUACION_DEBIL)
+                          and ancho >= objetivo * 0.7 and len(grupos) < partes_n - 1):
+            grupos.append(actual)
+            actual, ancho = [], 0
+    if actual:
+        grupos.append(actual)
+
+    textos = [" ".join(g) for g in grupos]
+    total = sum(len(t) for t in textos) or 1
+    salida, t = [], t_ini
+    for i, txt in enumerate(textos):
+        dur = duracion * len(txt) / total
+        fin = t_fin if i == len(textos) - 1 else t + dur
+        salida.append((t, fin, txt))
+        t = fin
+    return salida
+
+
 def _agrupar_cues_en_bloques(cues, indice_inicial):
     """Agrupa los cues palabra a palabra de edge-tts en bloques legibles.
 
@@ -281,9 +331,16 @@ def _agrupar_cues_en_bloques(cues, indice_inicial):
     APLAZANDO", "DE HACERLO TODO PERFECTO,". Acá el corte lo deciden la
     puntuación, el ancho de línea y un piso de tiempo, que es el criterio de
     subtitulado de siempre: cortar donde el que habla hace la pausa."""
+    # Primero se parte lo que no entra en pantalla; recién después se agrupa lo
+    # que quedó corto. edge-tts entrega cues por palabra o por frase entera
+    # según la versión, así que hacen falta las dos pasadas.
+    partidos = []
+    for cue in cues:
+        partidos.extend(_partir_cue_largo(*cue))
+
     grupos = []
     acumulado = []
-    for t_ini, t_fin, texto in cues:
+    for t_ini, t_fin, texto in partidos:
         if acumulado:
             texto_actual = " ".join(t for _, _, t in acumulado)
             duracion = acumulado[-1][1] - acumulado[0][0]
