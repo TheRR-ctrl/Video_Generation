@@ -116,7 +116,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python pipeline.py --hasta "${{ github.event.inputs.hasta_etapa || 'publicar' }}"
 
-      - name: Subir logs y estado como artefacto
+      - name: Subir logs, estado y videos como artefacto
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -124,6 +124,7 @@ jobs:
           path: |
             pipeline_state/
             guion.txt
+            Videos Creados
           retention-days: 14
 
       - name: Guardar caché de pipeline_state (aunque el pipeline haya fallado)
