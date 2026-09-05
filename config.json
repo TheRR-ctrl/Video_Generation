@@ -11,6 +11,7 @@
   "motor_tts": "gemini",
   "voz_masculina": "Charon",
   "voz_femenina": "Kore",
+  "velocidad_locucion": "+18%",
   "voz_masculina_edge": "es-MX-JorgeNeural",
   "voz_femenina_edge": "es-MX-DaliaNeural",
   "genero_narrador": "masculino",

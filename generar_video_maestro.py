@@ -63,6 +63,11 @@ RESOLUCIONES = {
     "1:1": (1080, 1080),
 }
 
+# Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts). El
+# rango sale del pipeline hermano: lo bastante angosto para que la voz siga
+# sonando natural, lo bastante ancho para que dos videos seguidos del canal no
+# suenen idénticos.
+TONOS_LOCUCION = ("-8Hz", "-4Hz", "+0Hz", "+4Hz")
 DURACION_INTRO_CARD_SEG = 3.0
 # En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
 # retrasan el hook, que es justo lo que decide si el espectador se queda. El
@@ -748,6 +753,13 @@ def renderizar_una_historia(bloque, cfg, num=1):
             voz = cfg["voz_femenina"] if es_fem else cfg["voz_masculina"]
             ext_audio = "wav"
 
+        # Tono de la locución, sorteado una vez por video dentro de un rango
+        # estrecho. Es lo que hace el pipeline hermano y el motivo es de canal,
+        # no de escena: con el tono fijo todos los videos suenan a la misma voz
+        # robótica leyendo, y en un feed eso se nota. La semilla es el título,
+        # así que el mismo video siempre suena igual entre corridas.
+        tono_locucion = random.Random(info["hook"]).choice(TONOS_LOCUCION)
+
         motor = cfg.get("motor_broll", "veo")
         rutas_broll_lote = None
         if motor == "hyperframes":
@@ -776,7 +788,9 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if motor_tts == "edge":
                 ruta_srt_escena = gestor.registrar(f"escena_{i}_subtitulos.srt")
                 audio_ok = tts_edge.generar_audio(
-                    escena["texto"], voz, ruta_audio, ruta_srt_salida=ruta_srt_escena
+                    escena["texto"], voz, ruta_audio, ruta_srt_salida=ruta_srt_escena,
+                    velocidad=cfg.get("velocidad_locucion", tts_edge.VELOCIDAD_DEFAULT),
+                    tono=tono_locucion,
                 )
             else:
                 audio_ok = tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"])
