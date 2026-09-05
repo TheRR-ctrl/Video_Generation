@@ -45,6 +45,11 @@ on:
         required: false
         default: false
         type: boolean
+      regenerar_video:
+        description: "Rehacer el video con el MISMO guion (descarta los videos ya montados, no el guion). Para cuando cambia cómo se dibujan o se montan las escenas, no lo que dicen"
+        required: false
+        default: false
+        type: boolean
   # schedule:
   #   - cron: "0 14 * * *"  # todos los días 14:00 UTC — descomenta cuando quieras automatizarlo
 
@@ -114,6 +119,12 @@ jobs:
           rm -f guion.txt
           rm -rf "Videos Creados" pipeline_state/hyperframes_cache pipeline_state/manim_cache
           echo "Guion, videos y clips cacheados descartados: se reescriben en esta corrida."
+
+      - name: Descartar solo los videos ya montados (regenerar_video)
+        if: ${{ github.event.inputs.regenerar_video == 'true' && github.event.inputs.regenerar_guion != 'true' }}
+        run: |
+          rm -rf "Videos Creados"
+          echo "Videos descartados: se vuelven a montar con el guion que ya está cacheado."
 
       - name: Restaurar credenciales de YouTube
         env:
