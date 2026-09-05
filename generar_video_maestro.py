@@ -77,6 +77,14 @@ PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
 PUNTUACION_DEBIL = (",", ";")
 # Adelanto del subtítulo respecto de la voz, copiado de video-scout-pipeline.
 ADELANTO_SUBTITULO = timedelta(seconds=0.32)
+# Colores del subtítulo en formato ASS (&HBBGGRR): la frase va en blanco y la
+# palabra que se está diciendo salta a amarillo —el acento de
+# video-scout-pipeline— y crece un poco. El crecimiento es moderado a propósito:
+# al agrandar una palabra la línea se reacomoda, y con 130% el texto entero
+# bailaría en cada palabra.
+COLOR_BASE = "&H00FFFFFF&"
+COLOR_RESALTADO = "&H0000FFFF&"
+ESCALA_RESALTADO = 112
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
@@ -412,28 +420,83 @@ def format_ass_time(td):
     return f"{ts // 3600}:{(ts % 3600) // 60:02d}:{ts % 60:02d}.{int(td.microseconds / 10000):02d}"
 
 
+def _corte_dos_lineas(palabras):
+    """Índice donde partir el bloque en dos líneas, o None si entra en una.
+
+    Se parte por la mitad en vez de llenar la primera línea hasta el tope:
+    llenando, la última palabra cae sola abajo ("...EL TRABAJO EN / SÍ.") y se
+    lee peor que dos líneas parejas."""
+    texto = " ".join(palabras)
+    if len(texto) <= CARACTERES_MAX_SUBTITULO:
+        return None
+
+    mitad = len(texto) / 2
+    mejor, mejor_dist = None, None
+    ancho = 0
+    for j in range(1, len(palabras)):
+        ancho += len(palabras[j - 1]) + 1
+        dist = abs(ancho - mitad)
+        if mejor_dist is None or dist < mejor_dist:
+            mejor, mejor_dist = j, dist
+    return mejor
+
+
+def _tiempos_por_palabra(palabras, t_inicio, t_fin):
+    """Reparte la duración del bloque entre sus palabras, proporcional a los
+    caracteres de cada una: las palabras largas se pronuncian más lento."""
+    total = sum(len(p) for p in palabras) or 1
+    duracion = (t_fin - t_inicio).total_seconds()
+    tiempos, t = [], t_inicio
+    for i, palabra in enumerate(palabras):
+        fin = t_fin if i == len(palabras) - 1 else t + timedelta(seconds=duracion * len(palabra) / total)
+        tiempos.append((t, fin))
+        t = fin
+    return tiempos
+
+
+def _linea_resaltada(palabras, indice_resaltada, corte):
+    """La frase completa, con una sola palabra resaltada en color y tamaño.
+
+    Se emite la frase entera en cada línea de diálogo —no solo la palabra de
+    turno— para que el espectador lea el contexto y no palabras sueltas. El
+    resaltado marca dónde va la voz."""
+    partes = []
+    for j, palabra in enumerate(palabras):
+        if j == corte:
+            partes.append("\\N")
+        if j == indice_resaltada:
+            partes.append(
+                f"{{\\c{COLOR_RESALTADO}\\fscx{ESCALA_RESALTADO}\\fscy{ESCALA_RESALTADO}}}"
+                f"{palabra.upper()}"
+                f"{{\\c{COLOR_BASE}\\fscx100\\fscy100}} "
+            )
+        else:
+            partes.append(f"{palabra.upper()} ")
+    return "".join(partes).replace(" \\N", "\\N").strip()
+
+
 def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
-    """Escribe el ASS con el estilo del pipeline hermano video-scout-pipeline
-    (ver su convertir_srt_a_karaoke_ass): tipografía enorme en amarillo con
-    contorno negro grueso, y karaoke de a pocas palabras.
+    """Escribe el ASS de los subtítulos: la frase completa en pantalla, con la
+    palabra que se está diciendo resaltada en color y tamaño.
 
-    Los valores son los de ese repo, no una reinterpretación: 92px y una palabra
-    por grupo en vertical, 120px y dos en horizontal; amarillo &H0000FFFF en
-    primario y secundario; contorno 6, sombra 2.
+    Del pipeline hermano video-scout-pipeline se conservan la tipografía
+    (Montserrat Black), el contorno negro grueso, la sombra y el adelanto de
+    0.32s respecto de la voz. Lo que cambia es la unidad: allá se muestran dos
+    palabras por vez y la frase nunca se ve entera; acá se muestra la frase
+    completa y el resaltado indica por dónde va la locución, que es lo que deja
+    leer el contexto en vez de palabras sueltas.
 
-    Única diferencia deliberada: allá el texto va centrado en el cuadro
-    (Alignment 5) porque el fondo es material filmado, mera textura. Acá el
+    El subtítulo se ancla abajo (Alignment 2), no centrado como allá: acá el
     fondo son diagramas rotulados que dicen algo, y el prompt de HyperFrames ya
-    les reserva la franja inferior, así que el subtítulo se ancla abajo
-    (Alignment 2) para no taparlos."""
+    les reserva la franja inferior."""
     es_vertical = h > w
-    font_size, palabras_por_grupo = (92, 1) if es_vertical else (120, 2)
+    font_size = 72 if es_vertical else 64
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         f"BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Karaoke,Montserrat Black,{font_size},&H0000FFFF&,&H0000FFFF&,&H00000000&,&H80000000&,1,0,0,0,"
+        f"Style: Karaoke,Montserrat Black,{font_size},{COLOR_BASE},{COLOR_BASE},&H00000000&,&H80000000&,1,0,0,0,"
         f"100,100,0,0,1,6,2,2,60,60,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
         f"MarginR, MarginV, Effect, Text\n"
     )
@@ -461,27 +524,17 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         # que va atrasado. Nunca antes del inicio del video.
         t_inicio = max(timedelta(0), parse_time(t_inicio_str) - ADELANTO_SUBTITULO)
         t_fin = max(timedelta(0), parse_time(t_fin_str) - ADELANTO_SUBTITULO)
-        dur_cs = int((t_fin - t_inicio).total_seconds() * 100)
-        if dur_cs <= 0:
+        if (t_fin - t_inicio).total_seconds() <= 0:
             continue
 
-        # El bloque del SRT viene agrupado por frase y con su tiempo real (ver
-        # _agrupar_cues_en_bloques); acá se reparte en grupos de pocas palabras,
-        # que es lo que da el karaoke del pipeline hermano. El tiempo de cada
-        # grupo sale del bloque que lo contiene, así que sigue pegado a la voz.
-        grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
-        dur_grp = dur_cs // max(1, len(grupos))
-
-        t_act = t_inicio
-        for grupo in grupos:
-            t_sig = t_act + timedelta(seconds=dur_grp / 100.0)
-            texto_karaoke = "".join(
-                f"{{\\k{max(6, dur_grp // len(grupo))}}}{p.upper()} " for p in grupo
-            )
+        corte = _corte_dos_lineas(palabras)
+        for i, (t_ini_p, t_fin_p) in enumerate(_tiempos_por_palabra(palabras, t_inicio, t_fin)):
+            if (t_fin_p - t_ini_p).total_seconds() <= 0:
+                continue
             lineas_ass.append(
-                f"Dialogue: 0,{format_ass_time(t_act)},{format_ass_time(t_sig)},Karaoke,,0,0,0,,{texto_karaoke.strip()}\n"
+                f"Dialogue: 0,{format_ass_time(t_ini_p)},{format_ass_time(t_fin_p)},Karaoke,,0,0,0,,"
+                f"{_linea_resaltada(palabras, i, corte)}\n"
             )
-            t_act = t_sig
 
     with open(ass_out_path, 'w', encoding='utf-8') as f:
         f.writelines(lineas_ass)
