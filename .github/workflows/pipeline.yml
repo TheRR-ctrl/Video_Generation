@@ -45,6 +45,11 @@ on:
         required: false
         default: false
         type: boolean
+      regenerar_plan:
+        description: "Descartar también el plan de contenido y volver a planificar (necesario al cambiar de formato: el plan viejo trae duraciones y títulos del formato anterior). Implica regenerar el guion y el video"
+        required: false
+        default: false
+        type: boolean
       regenerar_video:
         description: "Rehacer el video con el MISMO guion (descarta los videos ya montados, no el guion). Para cuando cambia cómo se dibujan o se montan las escenas, no lo que dicen"
         required: false
@@ -121,8 +126,14 @@ jobs:
           restore-keys: |
             pipeline-state-
 
+      - name: Descartar el plan de contenido (regenerar_plan)
+        if: ${{ github.event.inputs.regenerar_plan == 'true' }}
+        run: |
+          rm -f pipeline_state/plan_contenido.json
+          echo "Plan de contenido descartado: se planifica de nuevo en esta corrida."
+
       - name: Descartar guion y clips cacheados (regenerar_guion)
-        if: ${{ github.event.inputs.regenerar_guion == 'true' }}
+        if: ${{ github.event.inputs.regenerar_guion == 'true' || github.event.inputs.regenerar_plan == 'true' }}
         run: |
           rm -f guion.txt
           rm -rf "Videos Creados" pipeline_state/hyperframes_cache pipeline_state/manim_cache
