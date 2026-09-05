@@ -64,6 +64,10 @@ RESOLUCIONES = {
 }
 
 DURACION_INTRO_CARD_SEG = 3.0
+# En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
+# retrasan el hook, que es justo lo que decide si el espectador se queda. El
+# formato corto arranca directo en la primera palabra.
+DURACION_INTRO_CARD_SHORT_SEG = 0.0
 FPS_VIDEO = 30
 
 # Reglas de subtitulado. Agrupar de a N palabras fijas dejaba cada bloque 1.4s
@@ -79,6 +83,12 @@ SEGUNDOS_MIN_SUBTITULO = 1.0
 # segundo— igual entra en una sola línea. Con la Montserrat Black condensada al
 # 88% y cuerpo 64, 40 caracteres ocupan ~1500px de los 1800 disponibles.
 CARACTERES_MAX_LINEA = 40
+# En vertical el cuadro tiene 1080px de ancho en vez de 1920: entra bastante
+# menos texto por línea, y el bloque se acorta en la misma proporción.
+CARACTERES_MAX_SUBTITULO_VERTICAL = 20
+CARACTERES_MAX_LINEA_VERTICAL = 24
+
+
 SEGUNDOS_MAX_SUBTITULO = 6.0
 PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
 PUNTUACION_DEBIL = (",", ";")
@@ -106,6 +116,19 @@ FACTOR_RESALTADO = 1.35
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
+
+
+def configurar_ancho_subtitulos(w, h):
+    """Fija los dos límites de ancho del subtítulo según el formato del video.
+
+    Son globales del módulo y no parámetros porque los usa toda la cadena de
+    agrupado (el corte de bloque, el partido de cues largos y el salto de línea),
+    y enhebrarlos por cinco funciones para un valor que no cambia dentro de una
+    corrida ensucia más de lo que aclara. Se llama una vez, al empezar el video."""
+    global CARACTERES_MAX_SUBTITULO, CARACTERES_MAX_LINEA
+    if h > w:
+        CARACTERES_MAX_SUBTITULO = CARACTERES_MAX_SUBTITULO_VERTICAL
+        CARACTERES_MAX_LINEA = CARACTERES_MAX_LINEA_VERTICAL
 
 
 def cargar_config():
@@ -524,6 +547,12 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
     les reserva la franja inferior."""
     es_vertical = h > w
     font_size = 72 if es_vertical else 64
+    # En vertical el subtítulo no va abajo del todo: la interfaz de Shorts y de
+    # TikTok tapa esa franja con el título, el usuario y los botones. Va cerca de
+    # la mitad del cuadro, como en el video de referencia (Alignment 2 con un
+    # margen inferior grande, porque libass ignora MarginV con el anclaje al
+    # medio). En horizontal sigue abajo, donde el diagrama le deja lugar.
+    margen_inferior = int(h * 0.46) if es_vertical else 60
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
@@ -533,7 +562,7 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         # la referencia. Contorno 6 y sombra 2, que es lo que la hace legible
         # sobre cualquier fondo.
         f"Style: Karaoke,Montserrat Black,{font_size},{COLOR_BASE},{COLOR_BASE},&H00000000&,&H80000000&,1,1,0,0,"
-        f"{ESCALA_BASE_X},100,0,0,1,6,2,2,60,60,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
+        f"{ESCALA_BASE_X},100,0,0,1,6,2,2,60,60,{margen_inferior},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
         f"MarginR, MarginV, Effect, Text\n"
     )
 
@@ -706,6 +735,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         print(f"\n🎬 [Día {info['dia']}] {info['hook']}  ({len(info['escenas'])} escena(s))")
 
         w, h = RESOLUCIONES.get(cfg["aspecto_video"], RESOLUCIONES["16:9"])
+        configurar_ancho_subtitulos(w, h)
         motor_tts = cfg.get("motor_tts", "gemini")
         es_fem = cfg.get("genero_narrador") == "femenino"
         if motor_tts == "edge":
@@ -861,11 +891,20 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 print(" ├─ ⚠️ Ducking nativo falló, se usa mezcla estática de música.")
 
         f_ass = ass_karaoke.replace('\\', '\\\\').replace(':', '\\:')
+        dur_tarjeta = (
+            DURACION_INTRO_CARD_SHORT_SEG if cfg.get("formato") == "short"
+            else DURACION_INTRO_CARD_SEG
+        )
+        # Con la tarjeta en 0 se saca el overlay del filtro entero: dejarlo con
+        # enable='between(t,0,0)' haría decodificar la imagen para nada.
+        pre_ass = (
+            f"[0:v][2:v]overlay=0:0:enable='between(t,0,{dur_tarjeta})'[bgc];[bgc]"
+            if dur_tarjeta > 0 else "[0:v]"
+        )
         if usar_musica_estatica:
             fade_inicio = max(0.0, dur_total - 2.0)
             fc = (
-                f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
-                f"[bgc]ass='{f_ass}'[vout];"
+                f"{pre_ass}ass='{f_ass}'[vout];"
                 f"[1:a]volume=1.0[av];[3:a]volume=0.08,afade=t=out:st={fade_inicio:.2f}:d=2[am];"
                 f"[av][am]amix=inputs=2:duration=first[aout]"
             )
@@ -873,10 +912,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
                       "-i", img_tarjeta, "-stream_loop", "-1", "-i", musica,
                       "-filter_complex", fc, "-map", "[vout]", "-map", "[aout]"]
         else:
-            fc = (
-                f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
-                f"[bgc]ass='{f_ass}'[vout]"
-            )
+            fc = f"{pre_ass}ass='{f_ass}'[vout]"
             cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_final,
                       "-i", img_tarjeta, "-filter_complex", fc, "-map", "[vout]", "-map", "1:a:0"]
 

@@ -83,6 +83,17 @@ RESOLUCIONES = {
     "1:1": (1080, 1080),
 }
 
+
+def _alto_dibujable(ancho, alto):
+    """Hasta qué altura puede dibujar la composición, en píxeles.
+
+    En horizontal se reserva el 22% de abajo para los subtítulos quemados. En
+    vertical hay que reservar mucho más: el subtítulo va cerca de la mitad del
+    cuadro (ver generar_video_maestro.configurar_ancho_subtitulos) y, debajo, la
+    interfaz de Shorts y de TikTok tapa el título, el usuario y los botones. Al
+    diagrama le queda la mitad de arriba."""
+    return int(alto * (0.44 if alto > ancho else 0.78))
+
 _PROMPT_SISTEMA = """Eres un generador de composiciones de HyperFrames (HTML + CSS + GSAP
 -> video, ver hyperframes.heygen.com) para motion graphics estilo "explicador
 visual minimalista" (grid neón sobre fondo oscuro, formas simples, texto
@@ -115,9 +126,10 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
 Reglas de composición (el clip NO se ve solo: encima lleva narración y
 subtítulos quemados, así que romperlas arruina el video aunque el render
 funcione):
-- La franja INFERIOR del cuadro (el 22% más bajo, o sea desde y={alto_libre}px
-  hacia abajo) va reservada para los subtítulos: no pongas ahí NINGÚN elemento
-  visible. Centrá la composición en la mitad superior.
+- Solo podés dibujar en los primeros {alto_libre}px de alto del cuadro. Lo de
+  abajo va reservado: ahí caen los subtítulos quemados y, en vertical, además la
+  interfaz de Shorts y TikTok. No pongas ningún elemento visible fuera de esa
+  zona; centrá la composición dentro de ella.
 - Todo texto en pantalla va EN ESPAÑOL y tiene que salir del contenido de la
   escena que se te describe: las palabras que la escena lista como "Etiquetas:",
   una frase corta que ya esté en esa descripción, o un número que aparezca ahí.
@@ -265,7 +277,7 @@ def _limpiar_html(texto):
 def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     instrucciones = _PROMPT_SISTEMA.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78),
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=_alto_dibujable(ancho, alto),
         segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO,
     )
     respuesta = gemini_utils.llamar_con_reintentos(
@@ -287,7 +299,7 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
     instrucciones = _PROMPT_SISTEMA_LOTE.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78),
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=_alto_dibujable(ancho, alto),
         segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO, n=n,
     )
     lista_escenas = "\n".join(

@@ -15,9 +15,10 @@
   "voz_femenina_edge": "es-MX-DaliaNeural",
   "genero_narrador": "masculino",
 
-  "duracion_min_video_seg": 240,
-  "duracion_max_video_seg": 1200,
-  "aspecto_video": "16:9",
+  "formato": "short",
+  "duracion_min_video_seg": 25,
+  "duracion_max_video_seg": 60,
+  "aspecto_video": "9:16",
   "duracion_clip_veo_seg": 8,
 
   "motor_broll": "veo",

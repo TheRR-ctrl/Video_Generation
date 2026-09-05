@@ -36,7 +36,26 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 CONFIG_DEFAULT = {
     "modelo_texto": "gemini-3.6-flash",
     "motor_broll": "veo",
+    "formato": "largo",
 }
+
+FORMATO_SHORT = "short"
+
+# Un short de 30-60s no se guiona como un video de 10 minutos: la escena de
+# 15-25s que sirve en formato largo se come medio short entero.
+GUIA_SHORT = """
+
+Esto es un SHORT vertical para YouTube Shorts y TikTok, de 25 a 60 segundos en
+total. Reglas que reemplazan a las de duración de arriba:
+- Escenas de 5 a 8 segundos de narración (15-25 palabras). En total, entre 5 y 8
+  escenas: no más, el short no da para más.
+- La primera escena es el hook y arranca EN LA PRIMERA PALABRA. Nada de "hoy
+  vamos a hablar de", nada de presentar el tema: la primera frase ya tiene que
+  generar la tensión. Quien mira decide en dos segundos si sigue o desliza.
+- Una sola idea de punta a punta. Nada de "tres estrategias": una, la más
+  contraintuitiva, desarrollada hasta el final.
+- El cierre remata la idea y ahí termina. No pidas suscripción ni comentarios, no
+  resumas lo dicho: en un short eso es tiempo tirado."""
 
 # El prompt visual tiene que hablarle al motor que realmente va a dibujarlo.
 # Veo filma: entiende "cinematic close-up, morning light, 8k". HyperFrames y
@@ -92,11 +111,15 @@ DESC_DATOS_VISUAL = (
 # nicho cambian de imagen cada 3-5 segundos. Por eso cada escena se divide en
 # planos: varios dibujos que se turnan mientras la locución sigue de corrido.
 PLANOS_POR_ESCENA = (3, 5)
+# En un short la escena dura 5-8s: con 3-5 planos cada uno duraría menos de dos
+# segundos, que no alcanza ni para armar el diagrama. Dos por escena da ~3s cada
+# uno, que es el ritmo de corte del formato.
+PLANOS_POR_ESCENA_SHORT = (2, 3)
 
 DESC_PLANOS_VISUAL = (
-    "Los PLANOS de la escena: entre 3 y 5 dibujos que se van turnando en pantalla "
-    "mientras la narración avanza, en el orden en que aparecen. No son cinco versiones "
-    "del mismo dibujo ni cinco escenas distintas: son los momentos de UNA misma idea, "
+    "Los PLANOS de la escena: entre {min} y {max} dibujos que se van turnando en pantalla "
+    "mientras la narración avanza, en el orden en que aparecen. No son versiones "
+    "del mismo dibujo ni escenas distintas: son los momentos de UNA misma idea, "
     "y juntos tienen que contar el arco de lo que se está narrando. "
     "Por ejemplo, si la narración dice que el alivio inmediato gana sobre la meta "
     "futura: (1) una balanza equilibrada con los dos platos rotulados, (2) el plato del "
@@ -109,13 +132,19 @@ DESC_PLANOS_VISUAL = (
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 
 
-def construir_schema_guion(motor_broll):
+def construir_schema_guion(motor_broll, formato="largo"):
     es_motion = motor_broll in MOTORES_MOTION_GRAPHICS
+    es_short = formato == FORMATO_SHORT
     descripcion_visual = DESC_VISUAL_MOTION if es_motion else DESC_VISUAL_FILMABLE
     propiedades = {
         "texto": {
             "type": "string",
-            "description": "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y natural para locución.",
+            "description": (
+                "Narración de 5-8 segundos (~15-25 palabras en español), tono cercano y "
+                "natural para locución." if es_short else
+                "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y "
+                "natural para locución."
+            ),
         },
         "prompt_visual": {
             "type": "string",
@@ -125,12 +154,13 @@ def construir_schema_guion(motor_broll):
     requeridos = ["texto", "prompt_visual"]
 
     if es_motion:
+        min_planos, max_planos = PLANOS_POR_ESCENA_SHORT if es_short else PLANOS_POR_ESCENA
         propiedades["planos_visuales"] = {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": PLANOS_POR_ESCENA[0],
-            "maxItems": PLANOS_POR_ESCENA[1],
-            "description": DESC_PLANOS_VISUAL,
+            "minItems": min_planos,
+            "maxItems": max_planos,
+            "description": DESC_PLANOS_VISUAL.format(min=min_planos, max=max_planos),
         }
         requeridos.append("planos_visuales")
         propiedades["tipo_visual"] = {
@@ -227,7 +257,7 @@ def dias_ya_guionados():
     return {int(n) for n in re.findall(r"^# Dia:\s*(\d+)", contenido, re.MULTILINE)}
 
 
-def escribir_guion_dia(client, modelo, dia, motor_broll="veo"):
+def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo"):
     prompt = (
         f"Tema: {dia['tema']}\n"
         f"Título/hook: {dia['titulo_hook']}\n"
@@ -238,6 +268,8 @@ def escribir_guion_dia(client, modelo, dia, motor_broll="veo"):
     )
 
     instrucciones = SYSTEM_PROMPT
+    if formato == FORMATO_SHORT:
+        instrucciones += GUIA_SHORT
     if motor_broll in MOTORES_MOTION_GRAPHICS:
         instrucciones += GUIA_VISUAL_MOTION
 
@@ -248,7 +280,7 @@ def escribir_guion_dia(client, modelo, dia, motor_broll="veo"):
         config=genai_types.GenerateContentConfig(
             system_instruction=instrucciones,
             response_mime_type="application/json",
-            response_schema=construir_schema_guion(motor_broll),
+            response_schema=construir_schema_guion(motor_broll, formato),
         ),
     )
     return json.loads(response.text)
@@ -330,7 +362,10 @@ def main():
             time.sleep(PAUSA_ENTRE_DIAS_SEG)
         logger.info(f"[{i}/{len(pendientes)}] Escribiendo guion del día {dia['dia']}: {dia['titulo_hook'][:60]}...")
         try:
-            guion = escribir_guion_dia(client, cfg["modelo_texto"], dia, cfg.get("motor_broll", "veo"))
+            guion = escribir_guion_dia(
+                client, cfg["modelo_texto"], dia,
+                cfg.get("motor_broll", "veo"), cfg.get("formato", "largo"),
+            )
             if not guion.get("escenas"):
                 logger.warning(f"Día {dia['dia']}: el modelo no devolvió escenas, se omite.")
                 continue

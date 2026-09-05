@@ -39,29 +39,70 @@ CONFIG_DEFAULT = {
     "videos_por_canal_referencia": 15,
     "dias_plan_contenido": 30,
     "modelo_texto": "gemini-3.6-flash",
+    "formato": "largo",
 }
 
-SCHEMA_PLAN = {
-    "type": "object",
-    "properties": {
-        "dias": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "tema": {"type": "string", "description": "Tema central del video, 1 frase."},
-                    "titulo_hook": {"type": "string", "description": "Título/hook para YouTube, genera curiosidad, sin clickbait engañoso."},
-                    "angulo": {"type": "string", "description": "Ángulo o tesis psicológica que desarrolla el video."},
-                    "palabras_clave": {"type": "array", "items": {"type": "string"}},
-                    "resumen": {"type": "string", "description": "2-4 frases con el arco del video: apertura, desarrollo, cierre. Sirve de base para el guionista."},
-                    "duracion_objetivo_min": {"type": "number", "description": "Duración objetivo del video en minutos (entre 6 y 15)."},
+# El formato manda sobre casi todo lo que sigue: un short y un video largo no se
+# planifican igual. Se lee de config.json ("formato": "short" | "largo").
+FORMATO_SHORT = "short"
+
+GUIA_SHORT = """
+
+Este canal publica SHORTS verticales para YouTube Shorts y TikTok, de 25 a 60
+segundos. Eso cambia la estrategia:
+- El video entero desarrolla UNA sola idea. Nada de "tres estrategias": una, la
+  más contraintuitiva, contada hasta el final.
+- El hook va en los primeros 2 segundos, antes de cualquier contexto. Si la
+  primera frase no genera tensión, el espectador desliza.
+- El título es corto (menos de 60 caracteres) y funciona como la frase que se
+  dice al abrir, no como el título de un ensayo.
+- El cierre remata la idea; no hay espacio para pedir suscripción ni resumir."""
+
+GUIA_LARGO = """
+
+Este canal publica videos largos horizontales de 6 a 15 minutos, con espacio
+para desarrollar varias ideas y ejemplos."""
+
+def construir_schema_plan(formato):
+    es_short = formato == FORMATO_SHORT
+    desc_duracion = (
+        "Duración objetivo en minutos. Es un short: entre 0.5 y 1 (o sea 30 a 60 segundos)."
+        if es_short else
+        "Duración objetivo del video en minutos (entre 6 y 15)."
+    )
+    desc_titulo = (
+        "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
+        "no el título de un ensayo: tiene que generar tensión en el primer vistazo."
+        if es_short else
+        "Título/hook para YouTube, genera curiosidad, sin clickbait engañoso."
+    )
+    desc_resumen = (
+        "2-3 frases con el arco del short: el hook que abre, la idea que lo explica y el "
+        "remate. Una sola idea de punta a punta."
+        if es_short else
+        "2-4 frases con el arco del video: apertura, desarrollo, cierre. Sirve de base para el guionista."
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "dias": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tema": {"type": "string", "description": "Tema central del video, 1 frase."},
+                        "titulo_hook": {"type": "string", "description": desc_titulo},
+                        "angulo": {"type": "string", "description": "Ángulo o tesis psicológica que desarrolla el video."},
+                        "palabras_clave": {"type": "array", "items": {"type": "string"}},
+                        "resumen": {"type": "string", "description": desc_resumen},
+                        "duracion_objetivo_min": {"type": "number", "description": desc_duracion},
+                    },
+                    "required": ["tema", "titulo_hook", "angulo", "palabras_clave", "resumen", "duracion_objetivo_min"],
                 },
-                "required": ["tema", "titulo_hook", "angulo", "palabras_clave", "resumen", "duracion_objetivo_min"],
             },
         },
-    },
-    "required": ["dias"],
-}
+        "required": ["dias"],
+    }
 
 SYSTEM_PROMPT = """Eres estratega de contenido para un canal de YouTube en español de
 psicología, desarrollo personal y motivación. El canal es "sin rostro": no hay
@@ -115,6 +156,7 @@ def construir_bloque_referencia(referencias):
 
 
 def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a_generar):
+    formato = cfg.get("formato", "largo")
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
     prompt = (
         f"{construir_bloque_referencia(referencias)}\n\n"
@@ -128,9 +170,11 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
         model=cfg["modelo_texto"],
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=SYSTEM_PROMPT + (
+                GUIA_SHORT if formato == FORMATO_SHORT else GUIA_LARGO
+            ),
             response_mime_type="application/json",
-            response_schema=SCHEMA_PLAN,
+            response_schema=construir_schema_plan(formato),
         ),
     )
     data = json.loads(response.text)

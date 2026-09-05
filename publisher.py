@@ -52,6 +52,7 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 
 CONFIG_DEFAULT = {
     "buffer_horas_revision": 12,
+    "formato": "largo",
     "duracion_min_video_seg": 240,
     "duracion_max_video_seg": 1200,
     "categoria_youtube": "27",  # Education
@@ -182,7 +183,7 @@ def obtener_servicio_youtube():
     return build("youtube", "v3", credentials=creds)
 
 
-def construir_descripcion(metadata, video):
+def construir_descripcion(metadata, video, cfg=None):
     """Arma la descripción final: lo que genera el modelo + la línea de
     transparencia sobre contenido generado con IA (fija, no depende de que
     el modelo la recuerde) + atribución de música si corresponde."""
@@ -202,7 +203,12 @@ def construir_descripcion(metadata, video):
                 linea_musica += f" — {atribucion['pagina_jamendo']}"
             partes.append(linea_musica)
 
-    partes.append(" ".join(f"#{h}" for h in metadata["hashtags"]))
+    hashtags = list(metadata["hashtags"])
+    # YouTube clasifica un video como Short por su formato y duración, pero el
+    # hashtag ayuda a que lo agrupe bien y es lo que se acostumbra en el nicho.
+    if (cfg or {}).get("formato") == "short" and not any(h.lower() == "shorts" for h in hashtags):
+        hashtags.insert(0, "Shorts")
+    partes.append(" ".join(f"#{h}" for h in hashtags))
     return "\n\n".join(partes)
 
 
@@ -210,7 +216,7 @@ def subir_video(servicio, ruta_video, metadata, video, cfg, publish_at_iso):
     body = {
         "snippet": {
             "title": metadata["titulo_youtube"][:100],
-            "description": construir_descripcion(metadata, video),
+            "description": construir_descripcion(metadata, video, cfg),
             "tags": metadata["hashtags"],
             "categoryId": cfg["categoria_youtube"],
         },
