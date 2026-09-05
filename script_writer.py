@@ -210,6 +210,10 @@ Reglas:
   suscribirse.
 - Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): debe sonar
   como alguien hablando de viva voz.
+- Español neutro latinoamericano, tratando al espectador de TÚ: "cierras",
+  "tienes", "puedes". Nada de voseo ("cerrás", "tenés", "podés") ni de "vosotros":
+  la locución usa voces mexicanas y el voseo suena de otro país. Ojo, que estas
+  instrucciones estén escritas en otro registro no cambia el del guion.
 - No incluyas markdown ni encabezados en el texto narrado."""
 
 GUIA_VISUAL_MOTION = """
