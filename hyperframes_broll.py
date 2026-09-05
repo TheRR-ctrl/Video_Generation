@@ -57,6 +57,16 @@ DURACION_ESCENA_SEG = 18
 # a partir de ahí ya nada aparece ni desaparece, para que el clip se entienda
 # entrando en cualquier segundo del bucle.
 _SEGUNDO_DIAGRAMA_COMPLETO = int(DURACION_ESCENA_SEG * 0.4)
+# Instantes en que se comprueba que el clip muestre algo (ver
+# _clip_tiene_contenido): todos posteriores a _SEGUNDO_DIAGRAMA_COMPLETO, que es
+# a partir de cuándo el diagrama tiene que estar armado y sostenerse.
+INSTANTES_MUESTRA_CONTENIDO = (
+    DURACION_ESCENA_SEG * 0.5, DURACION_ESCENA_SEG * 0.7, DURACION_ESCENA_SEG * 0.95,
+)
+# Umbral de luminancia (0-255) del píxel más claro: el fondo #0b0f14 mide ~14 y
+# los clips con contenido medidos arrancan en 59, así que 40 separa sin falsos
+# positivos en ninguno de los dos sentidos.
+LUMINANCIA_MINIMA_CONTENIDO = 40
 # Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
 # `npx hyperframes@version` tiene que descargar el paquete completo (incluye
 # un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
@@ -283,6 +293,35 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     return htmls
 
 
+def _clip_tiene_contenido(ruta_clip):
+    """True si el clip muestra algo sobre el fondo en los instantes en que el
+    diagrama ya debería estar armado.
+
+    Existe porque un render puede terminar con código 0 y un mp4 válido, y aun
+    así ser 18 segundos de fondo liso (una composición donde nada llegó a
+    dibujarse). Eso pasa desapercibido hasta que se ve el video terminado, con
+    la escena entera en negro debajo de la narración. Acá se detecta y se trata
+    como un render fallido, para que el reintento pida otra composición.
+
+    Mide el píxel más claro del 78% superior del cuadro (el resto va tapado por
+    los subtítulos): el fondo es #0b0f14, o sea luminancia ~14, y los clips
+    buenos medidos llegan a 59 o más."""
+    for instante in INSTANTES_MUESTRA_CONTENIDO:
+        try:
+            res = subprocess.run(
+                ["ffmpeg", "-v", "error", "-ss", f"{instante:.2f}", "-i", ruta_clip,
+                 "-frames:v", "1", "-vf", "crop=iw:ih*0.78:0:0,scale=64:36",
+                 "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                capture_output=True, timeout=60,
+            )
+        except Exception as exc:
+            logger.warning(f"No se pudo inspeccionar {ruta_clip}: {exc}")
+            return True  # ante la duda, no descartes un clip que quizá esté bien
+        if res.stdout and max(res.stdout) >= LUMINANCIA_MINIMA_CONTENIDO:
+            return True
+    return False
+
+
 def _renderizar_composicion(html, ruta_salida):
     if not _archivo_valido(RUTA_GSAP_VENDOR):
         raise RuntimeError(f"No se encontró {RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
@@ -312,7 +351,13 @@ def _renderizar_composicion(html, ruta_salida):
         if not candidatos:
             raise RuntimeError("hyperframes render no generó ningún mp4 en renders/.")
 
-        shutil.copyfile(max(candidatos, key=os.path.getmtime), ruta_salida)
+        ruta_render = max(candidatos, key=os.path.getmtime)
+        if not _clip_tiene_contenido(ruta_render):
+            raise RuntimeError(
+                "El clip renderizado quedó vacío (el cuadro no muestra nada sobre el "
+                "fondo). Se descarta para que el reintento genere otra composición."
+            )
+        shutil.copyfile(ruta_render, ruta_salida)
 
 
 def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT, reintentos=2):
