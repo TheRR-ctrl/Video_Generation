@@ -176,7 +176,18 @@ lado de tu HTML), pasándole esos números y esas etiquetas tal cual, así:
          data-composition-src="compositions/chart-story.html"
          data-variable-values='{{"type":"bars","data":"1,1300","labels":"Tierra,Júpiter","emphasize":1,"unit":"x","accent":"blue"}}'
          data-start="0" data-duration="{duracion}" data-track-index="0"
-         data-width="{ancho}" data-height="{alto}"></div>
+         data-width="{ancho}" data-height="{alto_libre}"
+         style="position:absolute;left:0;top:0;width:{ancho}px;height:{alto_libre}px"></div>
+
+Copiá ese `data-height` y ese `style` tal cual: la gráfica arma su propia
+maqueta (ejes, rótulos y leyenda al pie) dentro de la caja que le des, así que
+si le pasás el alto completo del cuadro su leyenda cae justo donde van los
+subtítulos. Acotándola a {alto_libre}px queda entera en la zona libre.
+
+Las `labels` de chart-story van CORTAS, de una o dos palabras (12 caracteres
+como mucho cada una): van en la leyenda al pie, en una sola línea, y con
+etiquetas largas se encabalgan entre sí y quedan ilegibles. Si tu etiqueta
+natural es larga, acortala ("Resistencia superada" -> "Superada").
 
 Ese `<div>` va DENTRO de tu `#root` normal (junto a cualquier otro elemento
 de la escena). `type` puede ser "bars", "line", "donut" o "progress"; `data`
