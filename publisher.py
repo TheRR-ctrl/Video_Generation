@@ -53,6 +53,12 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 CONFIG_DEFAULT = {
     "buffer_horas_revision": 12,
     "formato": "largo",
+    # Tope de subidas por corrida, como en video-scout-pipeline. Sin él, una
+    # corrida que encuentra varios videos pendientes los sube todos de golpe:
+    # gasta la cuota diaria de la API de YouTube (cada subida cuesta 1600 de los
+    # 10000 puntos diarios) y publica en ráfaga, que es justo lo que un canal no
+    # quiere. None = sin tope.
+    "max_subidas_por_corrida": 1,
     "duracion_min_video_seg": 240,
     "duracion_max_video_seg": 1200,
     "categoria_youtube": "27",  # Education
@@ -267,8 +273,17 @@ def main():
 
     client = genai.Client()
     servicio_yt = None
+    max_subidas = cfg.get("max_subidas_por_corrida")
+    subidas_en_esta_corrida = 0
 
     for video in pendientes:
+        if max_subidas and subidas_en_esta_corrida >= max_subidas:
+            logger.info(
+                f"Tope de {max_subidas} subida(s) por corrida alcanzado — "
+                f"quedan {len(pendientes) - subidas_en_esta_corrida} para la próxima."
+            )
+            break
+
         ruta = video["ruta"]
         logger.info(f"Procesando: {os.path.basename(ruta)}")
 
@@ -307,6 +322,7 @@ def main():
             guardar_json(RUTA_RECHAZADOS, rechazados)
             continue
 
+        subidas_en_esta_corrida += 1
         logger.info(f"✅ Subido como privado, se publica solo el {publish_at_iso} — https://studio.youtube.com/video/{video_id}/edit")
         publicados.append({
             "ruta": ruta,
