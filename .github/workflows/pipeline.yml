@@ -40,6 +40,11 @@ on:
         default: "gemini"
         type: choice
         options: ["gemini", "edge"]
+      regenerar_guion:
+        description: "Descartar el guion, los clips cacheados y los videos ya hechos, y escribir todo de nuevo (necesario al cambiar de motor_broll: los prompts visuales se escriben distinto para cada motor)"
+        required: false
+        default: false
+        type: boolean
   # schedule:
   #   - cron: "0 14 * * *"  # todos los días 14:00 UTC — descomenta cuando quieras automatizarlo
 
@@ -102,6 +107,13 @@ jobs:
           key: pipeline-state-${{ github.run_id }}
           restore-keys: |
             pipeline-state-
+
+      - name: Descartar guion y clips cacheados (regenerar_guion)
+        if: ${{ github.event.inputs.regenerar_guion == 'true' }}
+        run: |
+          rm -f guion.txt
+          rm -rf "Videos Creados" pipeline_state/hyperframes_cache pipeline_state/manim_cache
+          echo "Guion, videos y clips cacheados descartados: se reescriben en esta corrida."
 
       - name: Restaurar credenciales de YouTube
         env:

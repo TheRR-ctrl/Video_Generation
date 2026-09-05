@@ -89,7 +89,23 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
 - Nada de `Date.now()` ni `Math.random()` (el render debe ser 100%
   determinista, mismo resultado en cada frame sin importar el orden en que
   se pidan).
-- No hay narración: el video es puramente visual, de {duracion} segundos.
+
+Reglas de composición (el clip NO se ve solo: encima lleva narración y
+subtítulos quemados, así que romperlas arruina el video aunque el render
+funcione):
+- La franja INFERIOR del cuadro (el 22% más bajo, o sea desde y={alto_libre}px
+  hacia abajo) va reservada para los subtítulos: no pongas ahí NINGÚN elemento
+  visible. Centrá la composición en la mitad superior.
+- Todo texto en pantalla va EN ESPAÑOL y tiene que salir del contenido de la
+  escena que se te describe: una palabra o frase corta que ya esté en esa
+  descripción, o un número que aparezca ahí. Nada de rótulos decorativos
+  inventados (nada de "MORNING FOCUS", "THE CROSSING", "SYNAPSE"): el
+  espectador está escuchando otra cosa y un texto que no corresponde se lee
+  como un error.
+- Ante la duda, menos texto: una composición puramente gráfica (formas y
+  movimiento, sin una sola palabra) es preferible a una con texto de relleno.
+- No hay narración dentro del clip: el video es puramente visual, de
+  {duracion} segundos.
 
 Si la escena es una COMPARACIÓN DE DATOS/NÚMEROS (tamaños, distancias,
 temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300 veces
@@ -154,7 +170,9 @@ def _limpiar_html(texto):
 
 def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
-    instrucciones = _PROMPT_SISTEMA.format(duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto)
+    instrucciones = _PROMPT_SISTEMA.format(
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78)
+    )
     respuesta = gemini_utils.llamar_con_reintentos(
         cliente.models.generate_content,
         model=modelo,
@@ -173,7 +191,9 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
 def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
-    instrucciones = _PROMPT_SISTEMA_LOTE.format(duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, n=n)
+    instrucciones = _PROMPT_SISTEMA_LOTE.format(
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78), n=n
+    )
     lista_escenas = "\n".join(
         f"{i}. {p} (no la copies literal, interprétala visualmente)"
         for i, p in enumerate(prompts_visuales, 1)

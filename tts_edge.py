@@ -10,11 +10,10 @@ original), invocado igual acá: como subproceso CLI (`python -m edge_tts`)
 en vez de una librería async, para no meter un runtime asyncio dentro de
 este pipeline que es sincrónico.
 
-A diferencia de Gemini TTS, edge-tts SÍ puede devolver subtítulos con
-marcas de tiempo por palabra (--write-subtitles), pero esta primera
-integración solo genera el audio para mantener la misma interfaz que
-tts_gemini.generar_audio y no tocar el resto del pipeline (que ya arma sus
-propios subtítulos aproximados a partir de la duración medida del audio).
+A diferencia de Gemini TTS, edge-tts devuelve subtítulos con marcas de tiempo
+reales por palabra (--write-subtitles): generar_audio los escribe si se le pasa
+ruta_srt_salida. El pipeline los usa cuando están disponibles y solo cae al
+timing estimado por caracteres con el motor de Gemini, que no los ofrece.
 
 Requiere: pip install edge-tts
 No requiere credenciales (habla directo con el servicio de Microsoft Edge).
@@ -42,20 +41,29 @@ def _voz_fallback(voz):
     return VOZ_FALLBACK_MASCULINA
 
 
-def generar_audio(texto, voz, ruta_audio_salida, modelo=MODELO_DEFAULT, reintentos=3):
+def generar_audio(texto, voz, ruta_audio_salida, modelo=MODELO_DEFAULT, reintentos=3, ruta_srt_salida=None):
     """Misma interfaz que tts_gemini.generar_audio: genera narración TTS y
     la guarda en ruta_audio_salida (mp3). Devuelve True/False; nunca reporta
-    éxito si el archivo resultante no es válido."""
+    éxito si el archivo resultante no es válido.
+
+    Si se pasa ruta_srt_salida, además escribe ahí los subtítulos con marcas de
+    tiempo REALES por palabra que devuelve edge-tts (--write-subtitles). Eso es
+    lo que permite que el karaoke siga a la voz de verdad, en vez de repartir el
+    tiempo de cada escena proporcionalmente a los caracteres (ver
+    generar_video_maestro.py). tts_gemini no puede hacer esto: es la ventaja
+    concreta de este motor."""
     voz_efectiva = _voz_fallback(voz)
 
     for intento in range(1, reintentos + 1):
         try:
             voz_intento = voz_efectiva if intento < reintentos else VOZ_FALLBACK_MASCULINA
+            comando = [sys.executable, "-m", "edge_tts",
+                       "--text", texto, "--voice", voz_intento,
+                       "--write-media", ruta_audio_salida]
+            if ruta_srt_salida:
+                comando += ["--write-subtitles", ruta_srt_salida]
             res = subprocess.run(
-                [sys.executable, "-m", "edge_tts",
-                 "--text", texto, "--voice", voz_intento,
-                 "--write-media", ruta_audio_salida],
-                capture_output=True, text=True, timeout=TIMEOUT_SEG,
+                comando, capture_output=True, text=True, timeout=TIMEOUT_SEG,
             )
             if res.returncode == 0 and os.path.isfile(ruta_audio_salida) and os.path.getsize(ruta_audio_salida) > 0:
                 return True

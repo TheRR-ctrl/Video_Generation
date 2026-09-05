@@ -26,8 +26,15 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
    modelo tiene instrucción explícita de generar ideas originales, no copiarlas.
    Salida: `pipeline_state/plan_contenido.json`.
 2. **`script_writer.py`** — convierte cada día pendiente del plan en un guion
-   completo dividido en escenas (guion + prompt visual en inglés por escena,
-   para el clip de Veo de esa escena). Salida: `guion.txt`.
+   completo dividido en escenas (guion + prompt visual por escena). El estilo
+   del prompt visual **depende de `motor_broll`**: descripción filmable en
+   inglés para Veo ("cinematic close-up, morning light"), o concepto a
+   visualizar en español para los motores que dibujan con código
+   (hyperframes/manim). Esto importa: si se le pide una toma fotorrealista a un
+   motor de motion graphics, el resultado son formas abstractas con rótulos
+   decorativos inventados que no tienen relación con la narración. Al cambiar
+   de motor hay que regenerar el guion (input `regenerar_guion` del workflow).
+   Salida: `guion.txt`.
 3. **`generar_video_maestro.py`** — por cada escena: genera la locución
    (`tts_gemini.py`), genera/recicla el clip de video de apoyo según
    `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo, o
@@ -158,6 +165,15 @@ guardaría nada del progreso real ya hecho.
 
 Si el pipeline te está topando con 429 `RESOURCE_EXHAUSTED` en la etapa de
 locución, cambiá `motor_tts` a `"edge"`.
+
+**Subtítulos:** con `"edge"` los subtítulos salen de `--write-subtitles`, o sea
+con las marcas de tiempo **reales por palabra** que devuelve el propio motor de
+voz (igual que en `video-scout-pipeline`). Con `"gemini"` no hay timings
+disponibles, así que se cae a repartir la duración medida del audio
+proporcionalmente a los caracteres de cada bloque — funciona, pero se desfasa
+apenas la locución cambia de ritmo. Es una razón más para preferir `"edge"`.
+El tamaño de bloque en pantalla es `PALABRAS_POR_SUBTITULO` (4): con menos, el
+karaoke parpadea palabra por palabra y no se alcanza a leer.
 
 ## Mezcla de música con ducking nativo (`hyperframes_audio_mix.py`)
 

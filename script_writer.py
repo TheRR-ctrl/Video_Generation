@@ -1,8 +1,10 @@
 """
 Script Writer — convierte pipeline_state/plan_contenido.json (salida de
 content_planner.py) en guion.txt, dividiendo cada video en escenas: cada
-escena trae el texto narrado y un prompt visual en inglés para generar su
-clip de video de apoyo con IA (Veo, ver veo_broll.py).
+escena trae el texto narrado y un prompt visual para generar su clip de video
+de apoyo. El estilo del prompt visual depende de 'motor_broll' en config.json:
+descripción filmable en inglés para Veo, o concepto a visualizar en español
+para los motores que dibujan con código (hyperframes/manim).
 
 Usa Gemini (capa gratuita) para escribir el guion completo de cada día.
 
@@ -33,31 +35,57 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 
 CONFIG_DEFAULT = {
     "modelo_texto": "gemini-3.6-flash",
+    "motor_broll": "veo",
 }
 
-SCHEMA_GUION = {
-    "type": "object",
-    "properties": {
-        "escenas": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "texto": {
-                        "type": "string",
-                        "description": "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y natural para locución.",
+# El prompt visual tiene que hablarle al motor que realmente va a dibujarlo.
+# Veo filma: entiende "cinematic close-up, morning light, 8k". HyperFrames y
+# Manim dibujan con código: no pueden filmar a una persona en un escritorio, y
+# si se les pide eso terminan inventando decoración abstracta con texto suelto
+# que no tiene relación con la narración (ver README, sección motor_broll).
+DESC_VISUAL_FILMABLE = (
+    "Descripción en inglés, concreta y filmable, para generar con IA un clip de video "
+    "que ilustre esta escena. Sin texto en pantalla, sin rostros reconocibles, sin marcas/logos."
+)
+DESC_VISUAL_MOTION = (
+    "Descripción EN ESPAÑOL del concepto a visualizar como motion graphics abstractos "
+    "(formas, líneas, diagramas, comparaciones numéricas), NO como una toma filmada. "
+    "Describe la idea y su metáfora visual, no una escena de la vida real: en vez de "
+    "'primer plano de una persona en un escritorio', escribí 'una tarea única se fragmenta "
+    "en decenas de tareas pequeñas que orbitan alrededor'. Si la escena menciona cifras o "
+    "compara magnitudes, decilo explícitamente para que se dibuje como gráfica."
+)
+
+MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
+
+
+def construir_schema_guion(motor_broll):
+    descripcion_visual = (
+        DESC_VISUAL_MOTION if motor_broll in MOTORES_MOTION_GRAPHICS else DESC_VISUAL_FILMABLE
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "escenas": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "texto": {
+                            "type": "string",
+                            "description": "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y natural para locución.",
+                        },
+                        "prompt_visual": {
+                            "type": "string",
+                            "description": descripcion_visual,
+                        },
                     },
-                    "prompt_visual": {
-                        "type": "string",
-                        "description": "Descripción en inglés, concreta y filmable, para generar con IA un clip de video que ilustre esta escena. Sin texto en pantalla, sin rostros reconocibles, sin marcas/logos.",
-                    },
+                    "required": ["texto", "prompt_visual"],
                 },
-                "required": ["texto", "prompt_visual"],
             },
         },
-    },
-    "required": ["escenas"],
-}
+        "required": ["escenas"],
+    }
 
 SYSTEM_PROMPT = """Eres guionista de un canal de YouTube en español de psicología y
 desarrollo personal, formato narrado (voz en off, sin presentador en cámara), con
@@ -76,6 +104,20 @@ Reglas:
 - Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): debe sonar
   como alguien hablando de viva voz.
 - No incluyas markdown ni encabezados en el texto narrado."""
+
+GUIA_VISUAL_MOTION = """
+
+El video de apoyo NO se filma: se dibuja con código (motion graphics sobre fondo
+oscuro, estilo explicador de divulgación). Por eso cada prompt_visual describe
+un CONCEPTO a visualizar, no una toma de cámara:
+- Nada de "cinematic", "close-up", "8k", "golden hour", "depth of field",
+  personas, manos, oficinas ni paisajes: nada de eso se puede dibujar así.
+- Sí: metáforas visuales geométricas (una línea que se bifurca, una forma que se
+  fragmenta, dos barras que se comparan, un círculo que se cierra), diagramas
+  simples y magnitudes.
+- Cuando la narración mencione una cifra, una proporción o una comparación,
+  decilo con los números concretos en el prompt_visual: esas escenas se dibujan
+  como gráficas animadas y son las que más aportan al video."""
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -98,7 +140,7 @@ def dias_ya_guionados():
     return {int(n) for n in re.findall(r"^# Dia:\s*(\d+)", contenido, re.MULTILINE)}
 
 
-def escribir_guion_dia(client, modelo, dia):
+def escribir_guion_dia(client, modelo, dia, motor_broll="veo"):
     prompt = (
         f"Tema: {dia['tema']}\n"
         f"Título/hook: {dia['titulo_hook']}\n"
@@ -108,14 +150,18 @@ def escribir_guion_dia(client, modelo, dia):
         f"Duración objetivo: {dia['duracion_objetivo_min']} minutos"
     )
 
+    instrucciones = SYSTEM_PROMPT
+    if motor_broll in MOTORES_MOTION_GRAPHICS:
+        instrucciones += GUIA_VISUAL_MOTION
+
     response = llamar_con_reintentos(
         client.models.generate_content,
         model=modelo,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=instrucciones,
             response_mime_type="application/json",
-            response_schema=SCHEMA_GUION,
+            response_schema=construir_schema_guion(motor_broll),
         ),
     )
     return json.loads(response.text)
@@ -158,7 +204,7 @@ def main():
             time.sleep(PAUSA_ENTRE_DIAS_SEG)
         logger.info(f"[{i}/{len(pendientes)}] Escribiendo guion del día {dia['dia']}: {dia['titulo_hook'][:60]}...")
         try:
-            guion = escribir_guion_dia(client, cfg["modelo_texto"], dia)
+            guion = escribir_guion_dia(client, cfg["modelo_texto"], dia, cfg.get("motor_broll", "veo"))
             if not guion.get("escenas"):
                 logger.warning(f"Día {dia['dia']}: el modelo no devolvió escenas, se omite.")
                 continue

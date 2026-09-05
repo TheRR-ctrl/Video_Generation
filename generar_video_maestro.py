@@ -64,6 +64,11 @@ RESOLUCIONES = {
 
 DURACION_INTRO_CARD_SEG = 3.0
 
+# Palabras visibles por bloque de subtítulo. Con 2 el karaoke parpadea (una o
+# dos palabras sueltas por vez, imposible de leer en un video horizontal); 4
+# entra cómodo en una línea a 1920px y deja leer la frase completa.
+PALABRAS_POR_SUBTITULO = 4
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
 
@@ -202,11 +207,66 @@ def formatear_srt_time(segundos):
     return f"{horas:02d}:{minutos:02d}:{segs:02d},{ms:03d}"
 
 
+def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial, palabras_por_bloque=PALABRAS_POR_SUBTITULO):
+    """Reusa el SRT que edge-tts escribió para esta escena (marcas de tiempo
+    reales por palabra) desplazándolo al lugar que ocupa la escena dentro del
+    video completo.
+
+    Es la diferencia entre un karaoke que sigue a la voz y uno que va a la
+    deriva: la alternativa (generar_bloques_srt_escena) reparte el tiempo por
+    cantidad de caracteres, lo que se desfasa apenas la locución cambia de
+    ritmo. Devuelve ([], indice_inicial) si el SRT no existe o viene vacío, para
+    que el llamador pueda caer a la estimación sin romperse."""
+    if not archivo_valido(ruta_srt):
+        return [], indice_inicial
+
+    with open(ruta_srt, "r", encoding="utf-8") as f:
+        contenido = f.read()
+
+    bloques = re.findall(
+        r"\d+\s*\n(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*\n(.*?)(?=\n\s*\n|\Z)",
+        contenido, re.DOTALL,
+    )
+    if not bloques:
+        return [], indice_inicial
+
+    # edge-tts corta un cue por palabra (o por frase corta, según versión). Se
+    # agrupan de a palabras_por_bloque tomando el inicio real del primer cue y
+    # el final real del último: el bloque queda legible en pantalla sin perder
+    # la sincronía con la voz.
+    lineas = []
+    idx = indice_inicial
+    acumulado = []
+    for t_ini_str, t_fin_str, texto in bloques:
+        texto = " ".join(texto.split())
+        if not texto:
+            continue
+        t_ini = parse_time(t_ini_str).total_seconds() + offset_seg
+        t_fin = parse_time(t_fin_str).total_seconds() + offset_seg
+        if t_fin <= t_ini:
+            continue
+        acumulado.append((t_ini, t_fin, texto))
+        if sum(len(t.split()) for _, _, t in acumulado) >= palabras_por_bloque:
+            lineas.append(_bloque_srt(acumulado, idx))
+            idx += 1
+            acumulado = []
+    if acumulado:
+        lineas.append(_bloque_srt(acumulado, idx))
+        idx += 1
+    return lineas, idx
+
+
+def _bloque_srt(cues, indice):
+    t_ini = cues[0][0]
+    t_fin = cues[-1][1]
+    texto = " ".join(t for _, _, t in cues)
+    return f"{indice}\n{formatear_srt_time(t_ini)} --> {formatear_srt_time(t_fin)}\n{texto}\n"
+
+
 def generar_bloques_srt_escena(texto, duracion_seg, offset_seg, indice_inicial, palabras_por_grupo=5):
-    """No hay marcas de tiempo por palabra (Gemini TTS no las da, a
-    diferencia de edge-tts), así que se distribuye el tiempo de cada grupo
-    de palabras proporcionalmente a su longitud dentro de la duración
-    medida del audio de la escena."""
+    """Fallback para motores de TTS que no devuelven marcas de tiempo por
+    palabra (Gemini TTS): distribuye el tiempo de cada grupo de palabras
+    proporcionalmente a su longitud dentro de la duración medida del audio."""
     palabras = texto.split()
     if not palabras or duracion_seg <= 0:
         return [], indice_inicial
@@ -240,7 +300,7 @@ def format_ass_time(td):
 
 
 def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
-    font_size, palabras_por_grupo = (58, 2)
+    font_size, palabras_por_grupo = (58, PALABRAS_POR_SUBTITULO)
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
@@ -397,8 +457,12 @@ def renderizar_una_historia(bloque, cfg, num=1):
         for i, escena in enumerate(info["escenas"], 1):
             print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución ({motor_tts})...")
             ruta_audio = gestor.registrar(f"escena_{i}_audio.{ext_audio}")
+            ruta_srt_escena = None
             if motor_tts == "edge":
-                audio_ok = tts_edge.generar_audio(escena["texto"], voz, ruta_audio)
+                ruta_srt_escena = gestor.registrar(f"escena_{i}_subtitulos.srt")
+                audio_ok = tts_edge.generar_audio(
+                    escena["texto"], voz, ruta_audio, ruta_srt_salida=ruta_srt_escena
+                )
             else:
                 audio_ok = tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"])
             if not audio_ok:
@@ -432,7 +496,11 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if not archivo_valido(ruta_clip_escena):
                 raise RuntimeError(f"El clip ajustado de la escena {i} no es válido.")
 
-            lineas, idx_srt = generar_bloques_srt_escena(escena["texto"], dur_escena, t_acum, idx_srt)
+            lineas = []
+            if ruta_srt_escena:
+                lineas, idx_srt = leer_bloques_srt_escena(ruta_srt_escena, t_acum, idx_srt)
+            if not lineas:
+                lineas, idx_srt = generar_bloques_srt_escena(escena["texto"], dur_escena, t_acum, idx_srt)
             lineas_srt.extend(lineas)
 
             clips_video.append(ruta_clip_escena)
