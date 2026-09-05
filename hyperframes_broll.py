@@ -241,7 +241,14 @@ animación y su propio registro en window.__timelines["chart-story"].
 
 `labels` son exactamente las etiquetas que la escena te dio (en español, en el
 mismo orden que los números) y `data` los números tal cual: no los redondees ni
-los sustituyas por valores propios.
+los sustituyas por valores propios. Si la escena dice "Etiquetas: Nivel normal,
+Intentar calmarse", esas dos van en `labels`; poner "Nivel 100" y "Nivel 0"
+—rótulos tuyos— deja la gráfica hablando de otra cosa que la narración.
+
+Y el SENTIDO de los datos tiene que coincidir con lo que se está narrando: si la
+escena dice que algo se duplica o crece, el valor destacado va MÁS ALTO que el
+otro. Una línea que baja mientras la voz dice que el estrés sube es peor que no
+poner gráfica: el espectador ve que el video se contradice.
 
 Si la escena NO trae "Datos:", podés usar `chart-story` igual con magnitudes
 relativas que reflejen lo que dice la narración (p. ej. "3,1" para "pesa el
