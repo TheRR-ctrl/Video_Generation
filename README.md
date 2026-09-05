@@ -13,7 +13,7 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
 |---|---|---|
 | Fuente de temas | Reddit (RSS público) | Plan de contenido generado con IA, inspirado en canales de referencia de YouTube (RSS público) |
 | Voz | edge-tts (gratis, local) | Gemini TTS |
-| Video de apoyo | Clips propios cortados al azar | Clips generados por escena con Gemini Veo |
+| Video de apoyo | Clips propios cortados al azar | Clips generados por escena: Gemini Veo, Manim o HyperFrames |
 | Formato | Shorts verticales | Video largo horizontal |
 
 ## Cómo funciona
@@ -30,8 +30,9 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
    para el clip de Veo de esa escena). Salida: `guion.txt`.
 3. **`generar_video_maestro.py`** — por cada escena: genera la locución
    (`tts_gemini.py`), genera/recicla el clip de video de apoyo según
-   `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo, o
-   `manim_broll.py` con animación por código — ver abajo), ajusta el clip a
+   `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo,
+   `manim_broll.py` con animación por código, o `hyperframes_broll.py` con
+   composiciones HTML — ver abajo), ajusta el clip a
    la duración real del audio, arma subtítulos karaoke y mezcla música de
    fondo. Concatena todas las escenas del día en un video final con ffmpeg.
    Salida: `pipeline_state/resultado_lote.json`.
@@ -67,7 +68,8 @@ abajo), así que el mismo código funciona en ambos lugares sin cambios.
 Variables de entorno:
 
 - `GEMINI_API_KEY` — gratis en https://aistudio.google.com/apikey. La usan
-  `content_planner.py`, `script_writer.py`, `tts_gemini.py`, `veo_broll.py` y
+  `content_planner.py`, `script_writer.py`, `tts_gemini.py`, los tres motores
+  de b-roll (`veo_broll.py`, `manim_broll.py`, `hyperframes_broll.py`) y
   `publisher.py`. **Ojo:** la generación de video con Veo consume cuota de
   pago más rápido que las llamadas de texto/voz — revisa los límites de tu
   cuenta antes de correr `pipeline.py` sin supervisión.
@@ -94,6 +96,40 @@ el pipeline por primera vez.
   workflow de GitHub Actions; en local: `apt install libcairo2-dev
   libpango1.0-dev pkg-config` (Debian/Ubuntu) antes de `pip install -r
   requirements.txt`.
+- `"hyperframes"` — `hyperframes_broll.py` le pide a Gemini una *composición
+  HTML* (HTML + CSS + [GSAP](https://gsap.com/)) y la renderiza a MP4 con el
+  CLI de [HyperFrames](https://hyperframes.heygen.com) (Apache-2.0, de HeyGen).
+  Gratis y local: el render no consume créditos de HeyGen ni pide cuenta.
+
+  HyperFrames no *reproduce* la página, le pide un frame concreto a la vez
+  (`seek(0)`, `seek(1/30)`, …) a un Chrome headless en modo determinista y
+  encadena los frames con ffmpeg, así que el resultado no depende de la
+  velocidad de la máquina: mismo HTML → mismo MP4. Cacheado en
+  `pipeline_state/hyperframes_cache/`.
+
+  Requiere **Node.js ≥ 22** en el PATH (el CLI se baja solo con `npx` la
+  primera vez) y salida a internet durante el render, porque la composición
+  carga GSAP desde jsDelivr.
+
+Comparativa rápida:
+
+| | `veo` | `manim` | `hyperframes` |
+|---|---|---|---|
+| Costo | de pago | gratis | gratis |
+| Tiempo por clip | minutos | ~1 min | ~10-20 s |
+| Duración del clip | fija (~8 s), se loopea | fija (~8 s), se loopea | **la de la locución de esa escena** |
+| Estilo | fotorrealista | vectorial matemático | diseño web / motion graphics |
+| Dependencias | — | Cairo, Pango | Node.js ≥ 22 |
+
+La columna de duración es la diferencia que más se nota: con `veo` y `manim`
+el clip dura menos que la narración y hay que loopearlo (se ve el salto);
+`hyperframes` compone cada clip con la duración real de su escena, así que no
+hay corte visible. Los tres motores comparten la misma interfaz
+(`generar_clip_cacheado`), así que cambiar de uno a otro es cambiar una
+palabra en `config.json`.
+
+Los tres motores se cachean por hash del prompt, así que reintentar una
+corrida interrumpida no vuelve a generar (ni a cobrar) lo ya hecho.
 
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir

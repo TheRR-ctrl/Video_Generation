@@ -29,6 +29,7 @@ import env_local  # noqa: F401 (carga .env si existe)
 import tts_gemini
 import veo_broll
 import manim_broll
+import hyperframes_broll
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -96,10 +97,14 @@ def archivo_valido(ruta):
     return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
 
-def comprobar_dependencias():
+def comprobar_dependencias(cfg=None):
     faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
     if faltantes:
         raise RuntimeError("Faltan dependencias externas: " + ", ".join(faltantes))
+    if cfg and cfg.get("motor_broll") == "hyperframes":
+        # Necesita además Node/npx; mejor saberlo antes del primer render que
+        # a mitad de la primera escena.
+        hyperframes_broll.comprobar_dependencias()
 
 
 class GestorTemporales:
@@ -378,7 +383,14 @@ def renderizar_una_historia(bloque, cfg, num=1):
 
             motor = cfg.get("motor_broll", "veo")
             print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
-            if motor == "manim":
+            if motor == "hyperframes":
+                # Único motor que compone el clip a medida: se le pide la
+                # duración real de la locución, así que no hay que loopearlo.
+                ruta_clip_base = hyperframes_broll.generar_clip_cacheado(
+                    escena["visual"], aspecto=cfg["aspecto_video"],
+                    modelo=cfg["modelo_texto"], duracion_seg=dur_escena,
+                )
+            elif motor == "manim":
                 ruta_clip_base = manim_broll.generar_clip_cacheado(
                     escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
                 )
@@ -503,7 +515,7 @@ def renderizar_lote_historias(archivo="guion.txt"):
     cfg = cargar_config()
     print("--------------------------------------------------\n🟢 INICIANDO GENERADOR DE VIDEOS\n--------------------------------------------------")
 
-    comprobar_dependencias()
+    comprobar_dependencias(cfg)
 
     if not os.path.exists(archivo):
         print(f"❌ Error: No se encontró '{archivo}'.")
