@@ -84,15 +84,31 @@ RESOLUCIONES = {
 }
 
 
+def _escala_chart_story(ancho, alto):
+    """Trozo de CSS extra para el div de chart-story, o cadena vacía.
+
+    Existe para documentar por qué NO se escala. chart-story dimensiona su
+    gráfica a partir del ANCHO de la caja, no del alto: en vertical queda en
+    unos 480px —el 25% del cuadro— por más alto que se le dé. Escalarla parecía
+    la salida, pero sus rótulos van pegados a los extremos del eje: medido, con
+    1.2 "Tension" ya se sale por el borde izquierdo y con 1.35 el dibujo llega
+    al 98% del ancho. El hueco de arriba se llena con un rótulo propio de la
+    composición (ver la regla en el prompt), no estirando la gráfica."""
+    return ""
+
+
 def _alto_dibujable(ancho, alto):
     """Hasta qué altura puede dibujar la composición, en píxeles.
 
-    En horizontal se reserva el 22% de abajo para los subtítulos quemados. En
-    vertical hay que reservar mucho más: el subtítulo va cerca de la mitad del
-    cuadro (ver generar_video_maestro.configurar_ancho_subtitulos) y, debajo, la
-    interfaz de Shorts y de TikTok tapa el título, el usuario y los botones. Al
-    diagrama le queda la mitad de arriba."""
-    return int(alto * (0.44 if alto > ancho else 0.78))
+    En horizontal se reserva el 22% de abajo para los subtítulos quemados.
+
+    En vertical el reparto es: diagrama arriba, subtítulo debajo (~61-70% del
+    alto) y el último 30% libre para la interfaz de Shorts y de TikTok, que tapa
+    ahí el título, el usuario y los botones. El primer intento le daba al
+    diagrama solo el 44% y dejaba 883px muertos entre el subtítulo y el borde
+    inferior; el 56% llena el cuadro hasta donde empieza lo que de verdad queda
+    tapado."""
+    return int(alto * (0.56 if alto > ancho else 0.78))
 
 _PROMPT_SISTEMA = """Eres un generador de composiciones de HyperFrames (HTML + CSS + GSAP
 -> video, ver hyperframes.heygen.com) para motion graphics estilo "explicador
@@ -141,6 +157,10 @@ funcione):
   etiqueta al lado (y su número, si la escena trae "Datos:"). Dos barras sin
   rótulo no comunican nada. Omitir texto solo es correcto cuando el dibujo no
   representa cantidades ni partes nombradas.
+- Usá TODO el alto disponible ({alto_libre}px), no solo la parte de arriba. Una
+  composición que ocupa el tercio superior y deja el resto en negro se ve a
+  medio hacer: el cuadro tiene que sentirse lleno hasta donde llega la zona
+  dibujable.
 - No hay narración dentro del clip: el video es puramente visual, de
   {duracion} segundos.
 
@@ -192,12 +212,19 @@ lado de tu HTML), pasándole esos números y esas etiquetas tal cual, así:
          data-variable-values='{{"type":"bars","data":"1,1300","labels":"Tierra,Júpiter","emphasize":1,"unit":"x","accent":"blue"}}'
          data-start="0" data-duration="{duracion}" data-track-index="0"
          data-width="{ancho}" data-height="{alto_libre}"
-         style="position:absolute;left:0;top:0;width:{ancho}px;height:{alto_libre}px"></div>
+         style="position:absolute;left:0;top:0;width:{ancho}px;height:{alto_libre}px{escala_chart}"></div>
 
 Copiá ese `data-height` y ese `style` tal cual: la gráfica arma su propia
 maqueta (ejes, rótulos y leyenda al pie) dentro de la caja que le des, así que
 si le pasás el alto completo del cuadro su leyenda cae justo donde van los
 subtítulos. Acotándola a {alto_libre}px queda entera en la zona libre.
+
+En VERTICAL, chart-story ocupa solo un cuarto del alto —su tamaño lo fija el
+ancho de la caja, no el alto— y encima queda un hueco. No la estires: sus
+rótulos van pegados a los extremos del eje y se salen del cuadro. Llená ese
+hueco con un rótulo grande TUYO encima de la gráfica, con la etiqueta principal
+de la escena o la cifra que se está comparando, que además ancla lo que la
+gráfica muestra.
 
 Las `labels` de chart-story van CORTAS, de una o dos palabras (12 caracteres
 como mucho cada una): van en la leyenda al pie, en una sola línea, y con
@@ -214,10 +241,13 @@ animación y su propio registro en window.__timelines["chart-story"].
 
 `labels` son exactamente las etiquetas que la escena te dio (en español, en el
 mismo orden que los números) y `data` los números tal cual: no los redondees ni
-los sustituyas por valores propios. Si la escena da etiquetas pero no números,
-podés usar `chart-story` igual con magnitudes relativas que reflejen lo que dice
-la narración (p. ej. "3,1" para "pesa el triple"), o dibujar el diagrama vos
-mismo — pero rotulado.
+los sustituyas por valores propios.
+
+Si la escena NO trae "Datos:", podés usar `chart-story` igual con magnitudes
+relativas que reflejen lo que dice la narración (p. ej. "3,1" para "pesa el
+triple"), pero en ese caso `unit` va VACÍO. Poniendo "%" a un número que
+inventaste, la gráfica afirma un dato falso: "20%" y "95%" se leen como cifras
+reales aunque solo quisieras mostrar que una sube más que la otra.
 """
 
 _PROMPT_SISTEMA_LOTE = _PROMPT_SISTEMA + """
@@ -277,7 +307,8 @@ def _limpiar_html(texto):
 def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     instrucciones = _PROMPT_SISTEMA.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=_alto_dibujable(ancho, alto),
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto,
+        alto_libre=_alto_dibujable(ancho, alto), escala_chart=_escala_chart_story(ancho, alto),
         segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO,
     )
     respuesta = gemini_utils.llamar_con_reintentos(
@@ -299,7 +330,8 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
     instrucciones = _PROMPT_SISTEMA_LOTE.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=_alto_dibujable(ancho, alto),
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto,
+        alto_libre=_alto_dibujable(ancho, alto), escala_chart=_escala_chart_story(ancho, alto),
         segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO, n=n,
     )
     lista_escenas = "\n".join(

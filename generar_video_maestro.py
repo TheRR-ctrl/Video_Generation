@@ -547,12 +547,13 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
     les reserva la franja inferior."""
     es_vertical = h > w
     font_size = 72 if es_vertical else 64
-    # En vertical el subtítulo no va abajo del todo: la interfaz de Shorts y de
-    # TikTok tapa esa franja con el título, el usuario y los botones. Va cerca de
-    # la mitad del cuadro, como en el video de referencia (Alignment 2 con un
-    # margen inferior grande, porque libass ignora MarginV con el anclaje al
-    # medio). En horizontal sigue abajo, donde el diagrama le deja lugar.
-    margen_inferior = int(h * 0.46) if es_vertical else 60
+    # En vertical el subtítulo no va abajo del todo: el último 30% lo tapa la
+    # interfaz de Shorts y de TikTok con el título, el usuario y los botones.
+    # Queda justo encima de esa franja (ocupa ~61-70% del alto), con el diagrama
+    # arriba. Se ancla abajo con un margen grande en vez de usar el anclaje al
+    # medio, porque libass ignora MarginV con ese anclaje. En horizontal sigue
+    # abajo, donde el diagrama le deja lugar.
+    margen_inferior = int(h * 0.29) if es_vertical else 60
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
