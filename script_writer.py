@@ -48,21 +48,80 @@ DESC_VISUAL_FILMABLE = (
     "que ilustre esta escena. Sin texto en pantalla, sin rostros reconocibles, sin marcas/logos."
 )
 DESC_VISUAL_MOTION = (
-    "Descripción EN ESPAÑOL del concepto a visualizar como motion graphics abstractos "
-    "(formas, líneas, diagramas, comparaciones numéricas), NO como una toma filmada. "
-    "Describe la idea y su metáfora visual, no una escena de la vida real: en vez de "
-    "'primer plano de una persona en un escritorio', escribí 'una tarea única se fragmenta "
-    "en decenas de tareas pequeñas que orbitan alrededor'. Si la escena menciona cifras o "
-    "compara magnitudes, decilo explícitamente para que se dibuje como gráfica."
+    "Descripción EN ESPAÑOL del DIAGRAMA a dibujar (no de una toma filmada, no de una "
+    "metáfora poética). Decí qué elementos concretos aparecen y qué relación muestran "
+    "entre ellos: 'dos barras enfrentadas, la de la izquierda tres veces más alta', "
+    "'una cadena de tres pasos donde el tercero vuelve al primero'. El espectador tiene "
+    "que entender la idea de la escena viendo SOLO ese dibujo, con el audio apagado."
+)
+
+# El diagrama tiene que ser de un tipo concreto: cuando el prompt visual queda
+# libre, el modelo devuelve metáforas ("una forma que se fragmenta") y el motor
+# las dibuja como cuadrados y líneas sueltas que no comunican nada. Pedir el
+# arquetipo explícito es lo que convierte la escena en una gráfica útil.
+TIPOS_VISUAL = ["comparacion", "proporcion", "evolucion", "proceso", "estructura", "metafora"]
+
+DESC_TIPO_VISUAL = (
+    "Arquetipo del diagrama de esta escena: "
+    "'comparacion' (dos o más magnitudes enfrentadas: barras), "
+    "'proporcion' (una parte contra el total: dona o barra de progreso), "
+    "'evolucion' (cómo cambia algo a lo largo del tiempo: línea), "
+    "'proceso' (pasos encadenados, causa y efecto, un ciclo que se repite), "
+    "'estructura' (las partes de algo y cómo se relacionan entre sí), "
+    "'metafora' (SOLO si de verdad no hay nada que comparar, medir, secuenciar ni "
+    "descomponer). Preferí siempre uno de los cinco primeros: 'metafora' como máximo "
+    "en 1 de cada 5 escenas."
+)
+
+DESC_ETIQUETAS_VISUAL = (
+    "Las palabras EN ESPAÑOL que van rotuladas sobre el dibujo, una por cada elemento "
+    "que representa algo (2 a 4 en total, de 1-3 palabras cada una, sacadas del texto "
+    "narrado de esta misma escena). Son las que hacen que el gráfico se entienda: "
+    "'Alivio inmediato', 'Meta futura'. No pongas títulos decorativos."
+)
+
+DESC_DATOS_VISUAL = (
+    "Los números exactos que corresponden, en el mismo orden que las etiquetas, "
+    "separados por coma (por ejemplo '80,20'). Si la narración menciona una cifra real, "
+    "usala tal cual y NO inventes otras. Si la escena no tiene cifras, dejá el string vacío: "
+    "es preferible un diagrama sin números a un dato inventado."
 )
 
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 
 
 def construir_schema_guion(motor_broll):
-    descripcion_visual = (
-        DESC_VISUAL_MOTION if motor_broll in MOTORES_MOTION_GRAPHICS else DESC_VISUAL_FILMABLE
-    )
+    es_motion = motor_broll in MOTORES_MOTION_GRAPHICS
+    descripcion_visual = DESC_VISUAL_MOTION if es_motion else DESC_VISUAL_FILMABLE
+    propiedades = {
+        "texto": {
+            "type": "string",
+            "description": "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y natural para locución.",
+        },
+        "prompt_visual": {
+            "type": "string",
+            "description": descripcion_visual,
+        },
+    }
+    requeridos = ["texto", "prompt_visual"]
+
+    if es_motion:
+        propiedades["tipo_visual"] = {
+            "type": "string",
+            "enum": TIPOS_VISUAL,
+            "description": DESC_TIPO_VISUAL,
+        }
+        propiedades["etiquetas_visual"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": DESC_ETIQUETAS_VISUAL,
+        }
+        propiedades["datos_visual"] = {
+            "type": "string",
+            "description": DESC_DATOS_VISUAL,
+        }
+        requeridos += ["tipo_visual", "etiquetas_visual", "datos_visual"]
+
     return {
         "type": "object",
         "properties": {
@@ -70,17 +129,8 @@ def construir_schema_guion(motor_broll):
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {
-                        "texto": {
-                            "type": "string",
-                            "description": "Narración de 15-25 segundos (~40-70 palabras en español), tono cercano y natural para locución.",
-                        },
-                        "prompt_visual": {
-                            "type": "string",
-                            "description": descripcion_visual,
-                        },
-                    },
-                    "required": ["texto", "prompt_visual"],
+                    "properties": propiedades,
+                    "required": requeridos,
                 },
             },
         },
@@ -108,16 +158,21 @@ Reglas:
 GUIA_VISUAL_MOTION = """
 
 El video de apoyo NO se filma: se dibuja con código (motion graphics sobre fondo
-oscuro, estilo explicador de divulgación). Por eso cada prompt_visual describe
-un CONCEPTO a visualizar, no una toma de cámara:
+oscuro, estilo explicador de divulgación). Cada escena es un DIAGRAMA que explica
+lo que se está narrando, no una decoración abstracta que acompaña:
 - Nada de "cinematic", "close-up", "8k", "golden hour", "depth of field",
   personas, manos, oficinas ni paisajes: nada de eso se puede dibujar así.
-- Sí: metáforas visuales geométricas (una línea que se bifurca, una forma que se
-  fragmenta, dos barras que se comparan, un círculo que se cierra), diagramas
-  simples y magnitudes.
-- Cuando la narración mencione una cifra, una proporción o una comparación,
-  decilo con los números concretos en el prompt_visual: esas escenas se dibujan
-  como gráficas animadas y son las que más aportan al video."""
+- El criterio para juzgar un visual es uno solo: si alguien mira el dibujo con el
+  audio apagado, ¿entiende la idea de la escena? Un cuadrado que pulsa o una línea
+  que cruza una elipse NO pasan esa prueba; dos barras rotuladas comparándose, un
+  ciclo de tres pasos que vuelve al inicio, o una dona con una porción resaltada, sí.
+- Por eso cada escena declara además tipo_visual (el arquetipo del diagrama),
+  etiquetas_visual (los rótulos en español que van sobre el dibujo) y datos_visual
+  (los números exactos, si la narración menciona alguno).
+- Al escribir la narración, buscá activamente que haya algo comparable, medible o
+  secuenciable en cada escena — una proporción, dos alternativas enfrentadas, tres
+  pasos encadenados. Eso es lo que hace que el video se pueda dibujar. Sin inventar
+  estudios ni cifras falsas: si no hay un dato real, comparás cualidades, no números."""
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -176,9 +231,32 @@ def construir_bloque_guion(dia, guion):
     ]
     for escena in guion["escenas"]:
         partes.append("### ESCENA")
-        partes.append(f"VISUAL: {escena['prompt_visual'].strip()}")
+        partes.append(f"VISUAL: {construir_prompt_visual(escena)}")
         partes.append(f"TEXTO: {escena['texto'].strip()}")
     return "\n".join(partes)
+
+
+def construir_prompt_visual(escena):
+    """Aplana los campos visuales de la escena en la única línea VISUAL: que
+    guarda guion.txt (y que lee generar_video_maestro.py). El tipo, las
+    etiquetas y los datos van explícitos en el texto porque el motor de b-roll
+    recibe esta línea tal cual: es lo que le dice qué diagrama dibujar y con qué
+    rótulos, en vez de dejarlo interpretar una metáfora libre."""
+    partes = [escena["prompt_visual"].strip()]
+
+    tipo = (escena.get("tipo_visual") or "").strip()
+    if tipo:
+        partes.insert(0, f"[{tipo}]")
+
+    etiquetas = [e.strip() for e in escena.get("etiquetas_visual") or [] if e and e.strip()]
+    if etiquetas:
+        partes.append(f"Etiquetas: {', '.join(etiquetas)}.")
+
+    datos = (escena.get("datos_visual") or "").strip()
+    if datos:
+        partes.append(f"Datos: {datos}.")
+
+    return " ".join(partes)
 
 
 def main():

@@ -97,21 +97,45 @@ funcione):
   hacia abajo) va reservada para los subtítulos: no pongas ahí NINGÚN elemento
   visible. Centrá la composición en la mitad superior.
 - Todo texto en pantalla va EN ESPAÑOL y tiene que salir del contenido de la
-  escena que se te describe: una palabra o frase corta que ya esté en esa
-  descripción, o un número que aparezca ahí. Nada de rótulos decorativos
-  inventados (nada de "MORNING FOCUS", "THE CROSSING", "SYNAPSE"): el
-  espectador está escuchando otra cosa y un texto que no corresponde se lee
-  como un error.
-- Ante la duda, menos texto: una composición puramente gráfica (formas y
-  movimiento, sin una sola palabra) es preferible a una con texto de relleno.
+  escena que se te describe: las palabras que la escena lista como "Etiquetas:",
+  una frase corta que ya esté en esa descripción, o un número que aparezca ahí.
+  Nada de rótulos decorativos inventados (nada de "MORNING FOCUS", "THE
+  CROSSING", "SYNAPSE"): el espectador está escuchando otra cosa y un texto que
+  no corresponde se lee como un error.
+- Pero los rótulos que SÍ informan son obligatorios: si el dibujo compara, mide,
+  ordena o descompone algo, cada elemento que representa una cosa lleva su
+  etiqueta al lado (y su número, si la escena trae "Datos:"). Dos barras sin
+  rótulo no comunican nada. Omitir texto solo es correcto cuando el dibujo no
+  representa cantidades ni partes nombradas.
 - No hay narración dentro del clip: el video es puramente visual, de
   {duracion} segundos.
 
-Si la escena es una COMPARACIÓN DE DATOS/NÚMEROS (tamaños, distancias,
-temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300 veces
-dentro de Júpiter"), no inventes tu propia gráfica animada: usa la
+PRUEBA QUE TIENE QUE PASAR TU COMPOSICIÓN (es el criterio de calidad, por
+encima de lo bonita que quede): alguien que ve el clip SIN audio tiene que
+entender la idea de la escena. Una sola forma que pulsa, gira o late; un
+cuadrado de color; una línea que cruza una elipse: todo eso reprueba, es
+decoración. Aprueba un dibujo con al menos dos elementos rotulados y una
+relación visible entre ellos (uno más grande que otro, uno que se convierte en
+otro, tres que se encadenan en ciclo, una parte destacada del total). Si lo que
+se te describe te parece abstracto, tu trabajo es encontrarle la forma medible,
+no dibujar la abstracción tal cual.
+
+La escena que se te describe empieza con su arquetipo entre corchetes; dibujalo
+así:
+- [comparacion] -> barras enfrentadas, rotuladas. Usá `chart-story` (abajo).
+- [proporcion]  -> dona o barra de progreso con la porción resaltada. `chart-story`.
+- [evolucion]   -> línea que avanza en el tiempo, con el punto clave marcado. `chart-story`.
+- [proceso]     -> cajas o círculos rotulados unidos por flechas que se dibujan
+                   una tras otra; si es un ciclo, la última vuelve a la primera.
+- [estructura]  -> un elemento central que se abre en sus partes rotuladas.
+- [metafora]    -> única categoría sin datos; aun así, dos elementos y una
+                   relación clara entre ellos (nunca una forma sola).
+
+Si la escena trae "Datos:" (o es una COMPARACIÓN DE DATOS/NÚMEROS: tamaños,
+distancias, temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300
+veces dentro de Júpiter"), NO inventes tu propia gráfica animada: usá la
 sub-composición ya construida `chart-story.html` (disponible en el mismo
-directorio que tu HTML), así:
+directorio que tu HTML), pasándole esos números y esas etiquetas tal cual, así:
 
     <div id="grafica" data-composition-id="chart-story"
          data-composition-src="chart-story.html"
@@ -126,6 +150,13 @@ redondear); `emphasize` es el índice del dato a resaltar; `accent` es
 "green", "blue" o "violet". No declares tú mismo un timeline para esta
 sub-composición ni le pongas `class="clip"` — ella ya trae su propia
 animación y su propio registro en window.__timelines["chart-story"].
+
+`labels` son exactamente las etiquetas que la escena te dio (en español, en el
+mismo orden que los números) y `data` los números tal cual: no los redondees ni
+los sustituyas por valores propios. Si la escena da etiquetas pero no números,
+podés usar `chart-story` igual con magnitudes relativas que reflejen lo que dice
+la narración (p. ej. "3,1" para "pesa el triple"), o dibujar el diagrama vos
+mismo — pero rotulado.
 """
 
 _PROMPT_SISTEMA_LOTE = _PROMPT_SISTEMA + """
