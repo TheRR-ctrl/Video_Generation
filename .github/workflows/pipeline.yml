@@ -66,6 +66,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev
 
+      # Sin esto, el estilo de subtítulos pide "Montserrat Black" y libass cae en
+      # silencio a la tipografía por defecto del runner: el karaoke se ve con
+      # otra letra, sin que nada lo reporte.
+      - name: Instalar la tipografía de los subtítulos (Montserrat Black)
+        run: |
+          sudo apt-get install -y fonts-montserrat
+          fc-list | grep -qi "Montserrat-Black" || { echo "Montserrat Black no quedó instalada"; exit 1; }
+
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:

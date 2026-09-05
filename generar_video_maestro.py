@@ -75,6 +75,8 @@ SEGUNDOS_MIN_SUBTITULO = 1.6
 SEGUNDOS_MAX_SUBTITULO = 6.0
 PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
 PUNTUACION_DEBIL = (",", ";")
+# Adelanto del subtítulo respecto de la voz, copiado de video-scout-pipeline.
+ADELANTO_SUBTITULO = timedelta(seconds=0.32)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
@@ -410,36 +412,29 @@ def format_ass_time(td):
     return f"{ts // 3600}:{(ts % 3600) // 60:02d}:{ts % 60:02d}.{int(td.microseconds / 10000):02d}"
 
 
-def _corte_dos_lineas(palabras):
-    """Índice donde partir el bloque en dos líneas, o None si entra en una.
-
-    Se parte por la mitad en vez de llenar la primera línea hasta el tope:
-    llenando, la última palabra cae sola abajo ("...EL TRABAJO EN / SÍ.") y se
-    lee peor que dos líneas parejas."""
-    texto = " ".join(palabras)
-    if len(texto) <= CARACTERES_MAX_SUBTITULO:
-        return None
-
-    mitad = len(texto) / 2
-    mejor, mejor_dist = None, None
-    ancho = 0
-    for j in range(1, len(palabras)):
-        ancho += len(palabras[j - 1]) + 1
-        dist = abs(ancho - mitad)
-        if mejor_dist is None or dist < mejor_dist:
-            mejor, mejor_dist = j, dist
-    return mejor
-
-
 def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
-    font_size = 58
+    """Escribe el ASS con el estilo del pipeline hermano video-scout-pipeline
+    (ver su convertir_srt_a_karaoke_ass): tipografía enorme en amarillo con
+    contorno negro grueso, y karaoke de a pocas palabras.
+
+    Los valores son los de ese repo, no una reinterpretación: 92px y una palabra
+    por grupo en vertical, 120px y dos en horizontal; amarillo &H0000FFFF en
+    primario y secundario; contorno 6, sombra 2.
+
+    Única diferencia deliberada: allá el texto va centrado en el cuadro
+    (Alignment 5) porque el fondo es material filmado, mera textura. Acá el
+    fondo son diagramas rotulados que dicen algo, y el prompt de HyperFrames ya
+    les reserva la franja inferior, así que el subtítulo se ancla abajo
+    (Alignment 2) para no taparlos."""
+    es_vertical = h > w
+    font_size, palabras_por_grupo = (92, 1) if es_vertical else (120, 2)
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         f"BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Karaoke,Montserrat Black,{font_size},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H80000000&,1,0,0,0,"
-        f"100,100,0,0,1,6,2,2,80,80,80,0\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
+        f"Style: Karaoke,Montserrat Black,{font_size},&H0000FFFF&,&H0000FFFF&,&H00000000&,&H80000000&,1,0,0,0,"
+        f"100,100,0,0,1,6,2,2,60,60,60,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
         f"MarginR, MarginV, Effect, Text\n"
     )
 
@@ -461,26 +456,32 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         if not palabras:
             continue
 
-        t_inicio = parse_time(t_inicio_str)
-        t_fin = parse_time(t_fin_str)
+        # Adelanto de 0.32s, igual que en el pipeline hermano: el subtítulo
+        # entra un instante antes que la sílaba, que es como se lee sin sentir
+        # que va atrasado. Nunca antes del inicio del video.
+        t_inicio = max(timedelta(0), parse_time(t_inicio_str) - ADELANTO_SUBTITULO)
+        t_fin = max(timedelta(0), parse_time(t_fin_str) - ADELANTO_SUBTITULO)
         dur_cs = int((t_fin - t_inicio).total_seconds() * 100)
         if dur_cs <= 0:
             continue
 
-        # Cada cue del SRT ya viene agrupado por frase y con su tiempo real
-        # (ver _agrupar_cues_en_bloques): se respeta tal cual. Volver a partirlo
-        # de a N palabras acá anulaba ese agrupado y devolvía el parpadeo.
-        k_por_palabra = max(6, dur_cs // len(palabras))
-        corte = _corte_dos_lineas(palabras)
-        partes = []
-        for j, p in enumerate(palabras):
-            if j == corte:
-                partes.append("\\N")  # segunda línea: ASS parte acá
-            partes.append(f"{{\\k{k_por_palabra}}}{p.upper()} ")
-        texto_karaoke = "".join(partes).replace(" \\N", "\\N").strip()
-        lineas_ass.append(
-            f"Dialogue: 0,{format_ass_time(t_inicio)},{format_ass_time(t_fin)},Karaoke,,0,0,0,,{texto_karaoke}\n"
-        )
+        # El bloque del SRT viene agrupado por frase y con su tiempo real (ver
+        # _agrupar_cues_en_bloques); acá se reparte en grupos de pocas palabras,
+        # que es lo que da el karaoke del pipeline hermano. El tiempo de cada
+        # grupo sale del bloque que lo contiene, así que sigue pegado a la voz.
+        grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
+        dur_grp = dur_cs // max(1, len(grupos))
+
+        t_act = t_inicio
+        for grupo in grupos:
+            t_sig = t_act + timedelta(seconds=dur_grp / 100.0)
+            texto_karaoke = "".join(
+                f"{{\\k{max(6, dur_grp // len(grupo))}}}{p.upper()} " for p in grupo
+            )
+            lineas_ass.append(
+                f"Dialogue: 0,{format_ass_time(t_act)},{format_ass_time(t_sig)},Karaoke,,0,0,0,,{texto_karaoke.strip()}\n"
+            )
+            t_act = t_sig
 
     with open(ass_out_path, 'w', encoding='utf-8') as f:
         f.writelines(lineas_ass)
