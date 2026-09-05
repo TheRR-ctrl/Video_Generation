@@ -156,7 +156,15 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
         cliente.models.generate_content,
         model=modelo,
         contents=f"{instrucciones}\n\nEscenas:\n{lista_escenas}",
-        config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+        config=genai_types.GenerateContentConfig(
+            # Con solo response_mime_type, Gemini a veces devuelve JSON mal
+            # formado en respuestas largas (un array de 5 documentos HTML
+            # completos) y se pierde la llamada entera, carísimo con la
+            # cuota tan ajustada. response_schema fuerza decodificación
+            # restringida a un array de strings válido.
+            response_mime_type="application/json",
+            response_schema=list[str],
+        ),
     )
     datos = json.loads(respuesta.text or "[]")
     if not isinstance(datos, list) or len(datos) != n:
