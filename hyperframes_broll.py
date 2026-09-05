@@ -48,7 +48,15 @@ RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ven
 # dejar que Gemini invente su propia animación de datos desde cero. Se ofrece
 # como opción en el prompt de sistema para escenas de comparación de datos.
 RUTA_CHART_STORY_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "chart-story.html")
-DURACION_ESCENA_SEG = 8
+# Igualado al largo típico de la narración de una escena (15-25s, ver
+# script_writer.py). Antes eran 8s: como generar_video_maestro.py repite el
+# clip con -stream_loop hasta cubrir la escena, el diagrama se armaba y se
+# desarmaba dos veces por escena, con el cuadro vacío en cada corte.
+DURACION_ESCENA_SEG = 18
+# Momento en que el diagrama tiene que estar armado del todo (ver _PROMPT_SISTEMA):
+# a partir de ahí ya nada aparece ni desaparece, para que el clip se entienda
+# entrando en cualquier segundo del bucle.
+_SEGUNDO_DIAGRAMA_COMPLETO = int(DURACION_ESCENA_SEG * 0.4)
 # Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
 # `npx hyperframes@version` tiene que descargar el paquete completo (incluye
 # un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
@@ -110,9 +118,23 @@ funcione):
 - No hay narración dentro del clip: el video es puramente visual, de
   {duracion} segundos.
 
+El clip se reproduce EN BUCLE debajo de una narración más larga que él, así
+que cualquier instante en que el cuadro quede vacío o a medio dibujar se ve
+como un error de reproducción. Por eso:
+- El primer elemento aparece dentro del primer medio segundo: nunca arranques
+  con el cuadro en negro.
+- El diagrama tiene que estar COMPLETO (todos sus elementos y todos sus
+  rótulos a la vista) antes del 40% de la duración, o sea antes del segundo
+  {segundo_completo}.
+- A partir de ahí NADA desaparece: no le pongas fade-out, ni `autoAlpha: 0` al
+  final, ni un `data-duration` que termine antes que la composición. Todos los
+  elementos llegan visibles al último frame. El movimiento del tramo final es
+  sutil (un pulso, un acento de color, una flecha que recorre el diagrama ya
+  armado), nunca desarmarlo.
+
 PRUEBA QUE TIENE QUE PASAR TU COMPOSICIÓN (es el criterio de calidad, por
-encima de lo bonita que quede): alguien que ve el clip SIN audio tiene que
-entender la idea de la escena. Una sola forma que pulsa, gira o late; un
+encima de lo bonita que quede): alguien que ve el clip SIN audio, entrando en
+CUALQUIER segundo del clip, tiene que entender la idea de la escena. Una sola forma que pulsa, gira o late; un
 cuadrado de color; una línea que cruza una elipse: todo eso reprueba, es
 decoración. Aprueba un dibujo con al menos dos elementos rotulados y una
 relación visible entre ellos (uno más grande que otro, uno que se convierte en
@@ -183,7 +205,12 @@ def _obtener_cliente():
 
 
 def _ruta_cache(prompt_visual, aspecto):
-    clave = hashlib.sha256(f"{aspecto}|{prompt_visual}".encode("utf-8")).hexdigest()[:24]
+    # La duración entra en la clave: un clip cacheado con otra duración ya no
+    # sirve (se armó para un bucle distinto), y sin esto la caché entre
+    # corridas lo revive silenciosamente.
+    clave = hashlib.sha256(
+        f"{aspecto}|{DURACION_ESCENA_SEG}|{prompt_visual}".encode("utf-8")
+    ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
 
@@ -202,7 +229,8 @@ def _limpiar_html(texto):
 def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     instrucciones = _PROMPT_SISTEMA.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78)
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78),
+        segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO,
     )
     respuesta = gemini_utils.llamar_con_reintentos(
         cliente.models.generate_content,
@@ -223,7 +251,8 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
     instrucciones = _PROMPT_SISTEMA_LOTE.format(
-        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78), n=n
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto, alto_libre=int(alto * 0.78),
+        segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO, n=n,
     )
     lista_escenas = "\n".join(
         f"{i}. {p} (no la copies literal, interprétala visualmente)"
