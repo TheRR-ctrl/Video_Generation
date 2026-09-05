@@ -137,9 +137,14 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
 - Fondo oscuro (#0b0f14), colores neón para los elementos principales
   (verdes/rosas/celestes saturados: #00e28a, #ff2d78, #3da9fc), formas con
   SVG o divs, tipografía del sistema (no importes fuentes web).
-- Nada de `Date.now()` ni `Math.random()` (el render debe ser 100%
-  determinista, mismo resultado en cada frame sin importar el orden en que
-  se pidan).
+- DETERMINISMO. El render no reproduce el video: le pide a Chrome frames
+  sueltos y fuera de orden, y lo que se vea en el segundo T tiene que depender
+  solo de T. Si algo "avanza solo", sale congelado o a saltos. Prohibido:
+    * `Date`, `Date.now()`, `performance.now()`, `Math.random()`.
+    * `requestAnimationFrame`, `setTimeout`, `setInterval`.
+    * `repeat: -1` en GSAP y `animation: ... infinite` en CSS.
+  Toda la animación va en la timeline pausada, que es lo único que el
+  compositor sabe recorrer.
 
 Reglas de composición (el clip NO se ve solo: encima lleva narración y
 subtítulos quemados, así que romperlas arruina el video aunque el render
@@ -317,9 +322,18 @@ def _bloque_correccion(correccion):
 
 
 def _entorno_cli():
+    """Entorno para el CLI en corridas desatendidas: sin telemetría, sin
+    comprobación de versión nueva y sin cargar skills. Los nombres de variable
+    son los que documenta el propio CLI; se ponen todos porque han cambiado
+    entre versiones y sobra con que alguna coincida."""
     env = dict(os.environ)
-    env["HYPERFRAMES_SKIP_SKILLS"] = "1"
-    env["HYPERFRAMES_TELEMETRY_DISABLED"] = "1"
+    env.update({
+        "HYPERFRAMES_SKIP_SKILLS": "1",
+        "HYPERFRAMES_TELEMETRY_DISABLED": "1",
+        "HYPERFRAMES_NO_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "HYPERFRAMES_NO_UPDATE_CHECK": "1",
+    })
     return env
 
 
