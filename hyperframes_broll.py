@@ -1,7 +1,7 @@
 """
-HyperFrames B-roll — tercer motor de video de apoyo: genera el clip de cada
-escena como una *composición HTML* (HTML + CSS + GSAP) y la renderiza a MP4
-determinista con el CLI de HyperFrames (https://hyperframes.heygen.com).
+HyperFrames B-roll — genera video de apoyo como una *composición HTML*
+(HTML + CSS + GSAP) y la renderiza a MP4 determinista con el CLI de
+HyperFrames (https://hyperframes.heygen.com, Apache-2.0).
 
 Idea (la misma que manim_broll.py, pero con la web como motor gráfico): en vez
 de pedirle un video a un modelo generativo, le pedimos a Gemini el *código* de
@@ -11,25 +11,31 @@ vez (`seek(0)`, `seek(1/30)`, ...) con Chrome headless en modo determinista, y
 encadena los frames con ffmpeg. Nunca llama a `play()`, así que el resultado no
 depende de la velocidad de la máquina: mismo HTML -> mismo MP4.
 
-Frente a los otros dos motores:
+Frente a los otros motores de video de apoyo de estos pipelines:
 
 | | veo | manim | hyperframes |
 |---|---|---|---|
 | Costo | de pago | gratis | gratis |
-| Velocidad | minutos/clip | ~1 min/clip | ~10-20 s/clip |
-| Duración del clip | fija (~8 s) | fija (~8 s) | **exacta**, la que pida la escena |
-| Estilo | fotorrealista | vectorial matemático | tipografía/diseño web (kinetic type, tarjetas, datos) |
+| Velocidad | minutos/clip | ~1 min/clip | ~3x tiempo real |
+| Duración del clip | fija (~8 s) | fija (~8 s) | **exacta**, la que se pida |
+| Estilo | fotorrealista | vectorial matemático | tipografía/diseño web |
+| Assets propios | no hace falta | no hace falta | no hace falta |
 
-Que la duración sea exacta es la diferencia importante para este pipeline: con
-veo/manim el clip se loopea para cubrir la locución y se nota el salto; acá el
-clip se compone ya con la duración de la narración de esa escena.
+## Módulo portable
+
+Este archivo no depende de ningún otro del repo: se copia tal cual entre
+proyectos. Lo único que cambia entre pipelines es el `PerfilVisual` — qué se
+está ilustrando, qué se superpone encima y qué zonas del cuadro hay que dejar
+libres. Hay dos perfiles listos abajo; añadir uno nuevo es rellenar un
+dataclass, no tocar el motor.
 
 Requiere: Node.js >= 22 (para `npx`), ffmpeg/ffprobe en el PATH.
-Credenciales: GEMINI_API_KEY (el mismo del resto del pipeline). El render de
-HyperFrames es local y no consume créditos de HeyGen ni pide cuenta.
+Credenciales: GEMINI_API_KEY. El render de HyperFrames es local: no consume
+créditos de HeyGen ni pide cuenta.
 """
 import os
 import re
+import time
 import json
 import math
 import shutil
@@ -37,10 +43,10 @@ import hashlib
 import logging
 import tempfile
 import subprocess
+from dataclasses import dataclass
 
 from google import genai
-
-import gemini_utils
+from google.genai import errors as genai_errors
 
 # Versión fijada del CLI: HyperFrames se mueve rápido y una corrida desatendida
 # no debería cambiar de motor de render sin que lo decidas. Súbela a mano.
@@ -52,18 +58,19 @@ CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 
 FPS = 30
-TIMEOUT_RENDER_SEG = 600
+TIMEOUT_RENDER_SEG = 900
 TIMEOUT_LINT_SEG = 120
 DURACION_DEFAULT_SEG = 8.0
-# Se renderiza un poco más largo que la narración: el ajuste de duración en
-# generar_video_maestro.py recorta el sobrante, y así un desfase de décimas
-# nunca deja el último tramo de la escena en negro o en loop.
+# Se renderiza un poco más largo de lo pedido: quien consume el clip lo recorta
+# con ffmpeg, y así un desfase de décimas nunca deja el final en negro.
 MARGEN_DURACION_SEG = 0.6
-DURACION_MAX_SEG = 60.0
+# El render va a ~3x tiempo real, así que una composición muy larga bloquea el
+# lote. Por encima de esto, el llamador debe loopear un clip más corto.
+DURACION_MAX_SEG = 120.0
 
-# Cambiar el prompt cambia el resultado para el mismo prompt_visual, así que
-# la versión entra en la clave de caché para no reutilizar clips viejos.
-VERSION_PROMPT = 1
+# Cambiar la plantilla del prompt cambia el resultado para el mismo
+# prompt_visual, así que la versión entra en la clave de caché.
+VERSION_PROMPT = 2
 
 RESOLUCIONES = {
     "16:9": (1920, 1080),
@@ -71,12 +78,92 @@ RESOLUCIONES = {
     "1:1": (1080, 1080),
 }
 
-_PROMPT_SISTEMA = """Eres un generador de composiciones HTML para HyperFrames, un motor
+
+# ---------------------------------------------------------
+# PERFILES VISUALES (lo único específico de cada pipeline)
+# ---------------------------------------------------------
+@dataclass(frozen=True)
+class PerfilVisual:
+    """Describe qué tipo de video de apoyo se quiere y qué se le superpone.
+
+    `nombre` entra en la clave de caché, así que cambiarlo fuerza a regenerar."""
+    nombre: str
+    contexto: str          # qué ilustra la composición y qué va encima
+    direccion_arte: str    # paleta, ritmo, tono
+    zonas_libres: str      # dónde no puede haber nada importante
+    max_palabras_pantalla: int
+    loopable: bool = False  # ¿el clip se va a repetir para cubrir más tiempo?
+
+
+PERFIL_NARRACION_REFLEXIVA = PerfilVisual(
+    nombre="narracion_reflexiva",
+    contexto=(
+        "Video de apoyo (b-roll) de UNA escena de un video largo narrado de "
+        "psicología / desarrollo personal en español. La locución va en otra "
+        "pista y los subtítulos karaoke se queman encima después: la "
+        "composición es PURAMENTE VISUAL y MUDA."
+    ),
+    direccion_arte=(
+        "- Fondo oscuro profundo (#080B10 - #12161D) con un degradado sutil; "
+        "nada de blanco puro de fondo.\n"
+        "- Paleta de acento fría y sobria, 2 colores como máximo (p. ej. "
+        '"#7C9CFF", "#4ADE9B", "#F2C14E"). Editorial y calmado, no infantil '
+        "ni \"startup\".\n"
+        "- Movimiento lento y continuo: derivas, escalas suaves, parallax, "
+        "líneas que se dibujan, formas geométricas grandes, degradados que "
+        "respiran. Easing `power2.out` / `power3.inOut`. Nada rebota ni "
+        "parpadea.\n"
+        "- Nunca se queda quieto: siempre hay algo moviéndose despacio.\n"
+        "- Metáfora visual abstracta del tema, nunca ilustración literal: sin "
+        "caras, sin figuras humanas reconocibles, sin logos ni marcas."
+    ),
+    zonas_libres=(
+        "- **25% inferior**: ahí van los subtítulos karaoke. Nada importante "
+        "ni brillante en esa banda.\n"
+        "- **30% superior**: en la primera escena va la tarjeta de título."
+    ),
+    max_palabras_pantalla=3,
+)
+
+
+PERFIL_HISTORIA_VERTICAL = PerfilVisual(
+    nombre="historia_vertical",
+    contexto=(
+        "Fondo de un Short vertical en español: una historia personal narrada "
+        "(drama, venganza, suspenso o comedia) con subtítulos karaoke grandes "
+        "sobre el video. El fondo NO cuenta la historia, solo sostiene la "
+        "atención mientras se escucha. Es PURAMENTE VISUAL y MUDO."
+    ),
+    direccion_arte=(
+        "- Fondo oscuro (#07090D - #14181F) con un degradado o viñeta que "
+        "empuja la mirada al centro.\n"
+        "- Un solo color de acento saturado según el tono de la historia "
+        '(p. ej. "#FF5C7A" tensión, "#7C9CFF" melancolía, "#4ADE9B" giro '
+        "favorable). Textura sutil de grano o ruido estático, sin exagerar.\n"
+        "- Movimiento hipnótico y constante de ritmo medio: patrones que se "
+        "desplazan, formas que rotan despacio, ondas, cuadrículas en "
+        "perspectiva, partículas grandes a la deriva. Es un fondo tipo "
+        '\"satisfying loop\", no una animación con guion.\n'
+        "- Nunca se detiene y nunca cambia de escena bruscamente: sin cortes, "
+        "sin flashes, sin nada que compita con los subtítulos.\n"
+        "- Abstracto siempre: sin caras, sin figuras humanas, sin logos, sin "
+        "texto que pueda leerse como parte de la historia."
+    ),
+    zonas_libres=(
+        "- **Franja central (del 30% al 75% de altura)**: ahí van los "
+        "subtítulos karaoke, que son grandes. Deja esa zona oscura y sin "
+        "detalle fino ni elementos brillantes.\n"
+        "- **20% superior**: ahí va la tarjeta de título del hook."
+    ),
+    max_palabras_pantalla=0,
+    loopable=True,
+)
+
+
+_PLANTILLA_PROMPT = """Eres un generador de composiciones HTML para HyperFrames, un motor
 que renderiza HTML a video MP4 frame a frame con Chrome headless.
 
-Generas el video de apoyo (b-roll) de UNA escena de un video narrado de
-psicología / desarrollo personal en español. La locución va por encima en otra
-pista: la composición es PURAMENTE VISUAL y MUDA.
+{CONTEXTO}
 
 Responde ÚNICAMENTE con el archivo HTML completo. Sin explicaciones, sin ```.
 
@@ -115,34 +202,78 @@ Responde ÚNICAMENTE con el archivo HTML completo. Sin explicaciones, sin ```.
 
 ## Dirección de arte
 
-- Fondo oscuro profundo (#080B10 - #12161D) con un degradado sutil; nada de
-  blanco puro de fondo.
-- Paleta de acento fría y sobria, 2 colores como máximo (p. ej. "#7C9CFF",
-  "#4ADE9B", "#F2C14E"). Estilo editorial y calmado, no infantil ni "startup".
-- Movimiento lento y continuo: derivas, escalas suaves, parallax, líneas que se
-  dibujan, formas geométricas grandes, degradados que respiran. Easing
-  `power2.out` / `power3.inOut`. Nada rebota ni parpadea.
-- Nunca se queda quieto: siempre hay algo moviéndose despacio en pantalla.
-- Empieza y termina en un estado compuesto (no en negro ni a medio fundido).
+{DIRECCION_ARTE}
 
-## Restricciones del pipeline (importantes)
+## Zonas del cuadro que deben quedar libres
 
-- **Texto: como mucho 3 palabras en toda la composición, o ninguna.** Los
-  subtítulos karaoke de la narración se queman encima después; texto de la
-  composición compite con ellos y con la locución.
-- **Deja libre el 25% inferior del cuadro**: ahí van los subtítulos. Nada de
-  contenido importante ni elementos brillantes en esa banda.
-- **Deja libre el 30% superior del cuadro**: en la primera escena va la tarjeta
-  de título.
-- Metáfora visual abstracta del tema, nunca ilustración literal: sin caras,
-  sin figuras humanas reconocibles, sin logos ni marcas.
+{ZONAS_LIBRES}
+
+## Texto en pantalla
+
+{REGLA_TEXTO}
+
+## Principio y final
+
+{REGLA_BUCLE}
 """
+
+_REGLA_TEXTO_SIN_TEXTO = (
+    "**Ninguna palabra en pantalla.** Los subtítulos de la narración se queman "
+    "encima después; cualquier texto de la composición compite con ellos."
+)
+_REGLA_TEXTO_CON_LIMITE = (
+    "**Como mucho {N} palabras en toda la composición, o ninguna.** Los "
+    "subtítulos de la narración se queman encima después; más texto compite "
+    "con ellos y con la locución."
+)
+
+_REGLA_BUCLE_CERRADO = (
+    "El clip se va a repetir en bucle para cubrir toda la narración, así que "
+    "**el último frame debe encajar con el primero**: que el estado visual en "
+    "el segundo {DURACION} sea prácticamente el mismo que en el segundo 0 "
+    "(mismas posiciones, mismas opacidades, misma escala), para que el corte "
+    "del bucle no se vea. Diseña el movimiento como un ciclo completo: una "
+    "vuelta entera, un desplazamiento de exactamente un patrón, una onda que "
+    "vuelve a su fase inicial."
+)
+_REGLA_BUCLE_ABIERTO = (
+    "Empieza y termina en un estado compuesto: ni en negro ni a medio fundido. "
+    "El clip dura exactamente lo que la escena, así que no hace falta que el "
+    "final enlace con el principio."
+)
 
 
 logger = logging.getLogger("hyperframes_broll")
 
 _client = None
 _cmd_cli = None
+
+
+# ---------------------------------------------------------
+# LLAMADA A GEMINI
+# ---------------------------------------------------------
+_RE_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
+
+
+def _llamar_con_reintentos(fn, *args, reintentos=3, espera_base_seg=20.0, **kwargs):
+    """Reintenta en 429 (RESOURCE_EXHAUSTED) respetando el `retryDelay` que
+    sugiere la propia API. Duplicado a propósito del `gemini_utils` de los
+    pipelines: este módulo se copia entre repos y no debe arrastrar imports."""
+    for intento in range(1, reintentos + 1):
+        try:
+            return fn(*args, **kwargs)
+        except genai_errors.APIError as exc:
+            es_cuota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+            if not es_cuota or intento == reintentos:
+                raise
+            m = _RE_RETRY_DELAY.search(str(exc))
+            espera = float(m.group(1)) + 1.0 if m else espera_base_seg * intento
+            logger.warning(
+                f"Cuota excedida (intento {intento}/{reintentos}), "
+                f"reintentando en {espera:.0f}s..."
+            )
+            time.sleep(espera)
+    return None  # inalcanzable
 
 
 def _obtener_cliente():
@@ -152,6 +283,9 @@ def _obtener_cliente():
     return _client
 
 
+# ---------------------------------------------------------
+# CLI DE HYPERFRAMES
+# ---------------------------------------------------------
 def _entorno_cli():
     """Entorno para el CLI: sin telemetría ni chequeo de actualizaciones, que
     en una corrida desatendida solo añaden latencia y llamadas de red."""
@@ -172,20 +306,17 @@ def comando_cli():
     global _cmd_cli
     if _cmd_cli is None:
         binario = os.environ.get("HYPERFRAMES_BIN") or shutil.which("hyperframes")
-        if binario:
-            _cmd_cli = [binario]
-        else:
-            _cmd_cli = ["npx", "-y", f"hyperframes@{VERSION_CLI}"]
+        _cmd_cli = [binario] if binario else ["npx", "-y", f"hyperframes@{VERSION_CLI}"]
     return list(_cmd_cli)
 
 
 def comprobar_dependencias():
-    """Lanza si falta algo para renderizar. Se llama antes del lote para
-    fallar temprano en vez de a mitad del primer video."""
+    """Lanza si falta algo para renderizar. Conviene llamarlo antes del lote
+    para fallar temprano en vez de a mitad del primer video."""
     if not (os.environ.get("HYPERFRAMES_BIN") or shutil.which("hyperframes") or shutil.which("npx")):
         raise RuntimeError(
             "El motor 'hyperframes' necesita Node.js >= 22 (para npx) o el CLI "
-            "instalado. Ver README, sección 'Motor de video de apoyo'."
+            "instalado. Ver README, sección del motor de video de apoyo."
         )
     faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
     if faltantes:
@@ -194,16 +325,19 @@ def comprobar_dependencias():
         )
 
 
-def _ruta_cache(prompt_visual, aspecto, duracion):
+# ---------------------------------------------------------
+# GENERACIÓN Y RENDER
+# ---------------------------------------------------------
+def _archivo_valido(ruta):
+    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
+
+
+def _ruta_cache(prompt_visual, aspecto, duracion, perfil):
     clave = hashlib.sha256(
-        f"v{VERSION_PROMPT}|{aspecto}|{duracion:.1f}|{prompt_visual}".encode("utf-8")
+        f"v{VERSION_PROMPT}|{perfil.nombre}|{aspecto}|{duracion:.1f}|{prompt_visual}".encode("utf-8")
     ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
-
-
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
 
 def _limpiar_html(texto):
@@ -214,13 +348,35 @@ def _limpiar_html(texto):
     return texto.strip()
 
 
-def _generar_html(cliente, prompt_visual, modelo, duracion, w, h, correccion=None):
-    sistema = _PROMPT_SISTEMA.format(DURACION=f"{duracion:.2f}", ANCHO=w, ALTO=h)
+def _construir_prompt_sistema(perfil, duracion, w, h):
+    if perfil.max_palabras_pantalla <= 0:
+        regla_texto = _REGLA_TEXTO_SIN_TEXTO
+    else:
+        regla_texto = _REGLA_TEXTO_CON_LIMITE.format(N=perfil.max_palabras_pantalla)
+
+    regla_bucle = (
+        _REGLA_BUCLE_CERRADO.format(DURACION=f"{duracion:.2f}")
+        if perfil.loopable else _REGLA_BUCLE_ABIERTO
+    )
+
+    return _PLANTILLA_PROMPT.format(
+        CONTEXTO=perfil.contexto,
+        DIRECCION_ARTE=perfil.direccion_arte,
+        ZONAS_LIBRES=perfil.zonas_libres,
+        REGLA_TEXTO=regla_texto,
+        REGLA_BUCLE=regla_bucle,
+        DURACION=f"{duracion:.2f}",
+        ANCHO=w,
+        ALTO=h,
+    )
+
+
+def _generar_html(cliente, prompt_visual, modelo, duracion, w, h, perfil, correccion=None):
     partes = [
-        sistema,
+        _construir_prompt_sistema(perfil, duracion, w, h),
         "",
-        "Idea visual de la escena (interprétala como metáfora abstracta, no la "
-        f"escribas en pantalla): {prompt_visual}",
+        "Idea visual (interprétala como metáfora abstracta, no la escribas en "
+        f"pantalla): {prompt_visual}",
     ]
     if correccion:
         partes += [
@@ -230,7 +386,7 @@ def _generar_html(cliente, prompt_visual, modelo, duracion, w, h, correccion=Non
             correccion,
         ]
 
-    respuesta = gemini_utils.llamar_con_reintentos(
+    respuesta = _llamar_con_reintentos(
         cliente.models.generate_content,
         model=modelo,
         contents="\n".join(partes),
@@ -294,20 +450,22 @@ def _render(proyecto, ruta_salida):
 
 
 def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
-                          reintentos=3, duracion_seg=None):
-    """Misma interfaz que veo_broll/manim_broll (con `duracion_seg` extra):
-    devuelve la ruta local a un clip de video para el prompt dado, o None si
-    falló tras los reintentos.
+                          reintentos=3, duracion_seg=None,
+                          perfil=PERFIL_NARRACION_REFLEXIVA):
+    """Devuelve la ruta local a un clip de video para la idea visual dada, o
+    None si falló tras los reintentos.
 
-    A diferencia de los otros dos motores, el clip se compone con la duración
-    que se pide, así que no hace falta loopearlo para cubrir la narración."""
+    Misma interfaz que veo_broll/manim_broll, más `duracion_seg` y `perfil`.
+    A diferencia de esos motores, el clip se compone con la duración que se
+    pide (hasta DURACION_MAX_SEG), así que no hace falta loopearlo para cubrir
+    la narración."""
     duracion = float(duracion_seg or DURACION_DEFAULT_SEG) + MARGEN_DURACION_SEG
     duracion = min(max(duracion, 2.0), DURACION_MAX_SEG)
     # Se redondea a medio segundo para que dos escenas de duración parecida con
-    # el mismo prompt visual compartan clip en vez de renderizar dos veces.
+    # la misma idea visual compartan clip en vez de renderizar dos veces.
     duracion = math.ceil(duracion * 2) / 2
 
-    ruta_salida = _ruta_cache(prompt_visual, aspecto, duracion)
+    ruta_salida = _ruta_cache(prompt_visual, aspecto, duracion, perfil)
     if _archivo_valido(ruta_salida):
         return ruta_salida
 
@@ -317,7 +475,8 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
 
     for intento in range(1, reintentos + 1):
         try:
-            html = _generar_html(cliente, prompt_visual, modelo, duracion, w, h, correccion)
+            html = _generar_html(cliente, prompt_visual, modelo, duracion, w, h,
+                                 perfil, correccion)
             with tempfile.TemporaryDirectory(prefix="hyperframes_broll_") as tmp:
                 with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
                     f.write(html)

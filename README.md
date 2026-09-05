@@ -111,6 +111,15 @@ el pipeline por primera vez.
   primera vez) y salida a internet durante el render, porque la composición
   carga GSAP desde jsDelivr.
 
+  `hyperframes_broll.py` es un módulo portable, idéntico al del repo hermano
+  [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pipeline)
+  (si lo tocas en uno, cópialo al otro). Lo único que cambia entre pipelines es
+  el `PerfilVisual`: qué se ilustra, qué se superpone encima y qué zonas del
+  cuadro deben quedar libres. Para el contrato de composición, los comandos del
+  CLI y cómo depurar un render fallido, ver
+  `.claude/skills/hyperframes-broll/SKILL.md` — una skill de Claude Code que
+  cualquier sesión en este repo carga sola.
+
 Comparativa rápida:
 
 | | `veo` | `manim` | `hyperframes` |

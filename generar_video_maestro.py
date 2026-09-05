@@ -389,6 +389,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 ruta_clip_base = hyperframes_broll.generar_clip_cacheado(
                     escena["visual"], aspecto=cfg["aspecto_video"],
                     modelo=cfg["modelo_texto"], duracion_seg=dur_escena,
+                    perfil=hyperframes_broll.PERFIL_NARRACION_REFLEXIVA,
                 )
             elif motor == "manim":
                 ruta_clip_base = manim_broll.generar_clip_cacheado(
