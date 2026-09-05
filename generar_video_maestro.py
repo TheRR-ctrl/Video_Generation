@@ -84,12 +84,19 @@ PUNTUACION_DEBIL = (",", ";")
 # Adelanto del subtítulo respecto de la voz, copiado de video-scout-pipeline.
 ADELANTO_SUBTITULO = timedelta(seconds=0.32)
 # Estilo del subtítulo, calcado del video de referencia que pasó el usuario
-# (docs/referencia-subtitulos.jpg): todo en blanco con contorno negro grueso, y
-# la palabra que se está diciendo se distingue SOLO por tamaño, no por color.
-# Probé antes con la palabra en amarillo y no es eso: en la referencia la línea
-# entera es blanca y lo único que cambia es que la palabra hablada es más
-# grande.
+# (docs/referencia-subtitulos.jpg): la frase en blanco con contorno negro
+# grueso, y la palabra que se está diciendo más grande. Además, las palabras con
+# peso propio se encienden en color, rotando por una paleta fija.
 COLOR_BASE = "&H00FFFFFF&"
+# Los cuatro acentos, medidos sobre los píxeles del video de referencia y
+# pasados a formato ASS (&HBBGGRR): verde (48,200,128), cian (56,200,224),
+# amarillo (245,220,70) y rojo (245,110,100). Rotan en ese orden.
+PALETA_RESALTADO = ("&H0080C830&", "&H00E0C838&", "&H0046DCF5&", "&H00646EF5&")
+# Solo las palabras de este largo para arriba reciben color; las cortas —de, la,
+# mi, un— solo crecen y siguen en blanco. La regla sale de mirar la referencia
+# cuadro a cuadro: HERMANITOS, ESTABAN, DORMIDOS y PUERTA van en color, mientras
+# que BIEN, MAMÁ, TOCÓ, MI y DE se quedan en blanco.
+LARGO_MIN_PALABRA_COLOREADA = 5
 # Tipografía condensada: la referencia usa una itálica pesada y angosta. No hay
 # una así en los repos de Ubuntu (Anton, Oswald), así que se consigue el mismo
 # efecto estrechando Montserrat Black, que ya se instala en el workflow.
@@ -464,7 +471,18 @@ def _tiempos_por_palabra(palabras, t_inicio, t_fin):
     return tiempos
 
 
-def _linea_resaltada(palabras, indice_resaltada, corte):
+def _color_resaltado(palabra, contador_color):
+    """Color de acento para la palabra resaltada, o None si va en blanco.
+
+    Devuelve también el contador actualizado: la paleta rota entre palabras
+    coloreadas a lo largo de todo el video, no dentro de cada bloque, que es
+    como se comporta en la referencia."""
+    if len(palabra.strip(".,;:¿?¡!—…\"'()")) < LARGO_MIN_PALABRA_COLOREADA:
+        return None, contador_color
+    return PALETA_RESALTADO[contador_color % len(PALETA_RESALTADO)], contador_color + 1
+
+
+def _linea_resaltada(palabras, indice_resaltada, corte, color=None):
     """La frase completa, con una sola palabra resaltada en color y tamaño.
 
     Se emite la frase entera en cada línea de diálogo —no solo la palabra de
@@ -475,12 +493,15 @@ def _linea_resaltada(palabras, indice_resaltada, corte):
         if j == corte:
             partes.append("\\N")
         if j == indice_resaltada:
-            partes.append(
-                f"{{\\fscx{round(ESCALA_BASE_X * FACTOR_RESALTADO)}"
-                f"\\fscy{round(100 * FACTOR_RESALTADO)}}}"
-                f"{palabra.upper()}"
-                f"{{\\fscx{ESCALA_BASE_X}\\fscy100}} "
+            abre = (
+                f"\\fscx{round(ESCALA_BASE_X * FACTOR_RESALTADO)}"
+                f"\\fscy{round(100 * FACTOR_RESALTADO)}"
             )
+            cierra = f"\\fscx{ESCALA_BASE_X}\\fscy100"
+            if color:
+                abre += f"\\c{color}"
+                cierra += f"\\c{COLOR_BASE}"
+            partes.append(f"{{{abre}}}{palabra.upper()}{{{cierra}}} ")
         else:
             partes.append(f"{palabra.upper()} ")
     return "".join(partes).replace(" \\N", "\\N").strip()
@@ -527,6 +548,7 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         contenido, re.DOTALL,
     )
     lineas_ass = [header]
+    contador_color = 0
 
     for _, t_inicio_str, t_fin_str, texto in bloques:
         palabras = texto.strip().replace('\n', ' ').split()
@@ -545,9 +567,10 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         for i, (t_ini_p, t_fin_p) in enumerate(_tiempos_por_palabra(palabras, t_inicio, t_fin)):
             if (t_fin_p - t_ini_p).total_seconds() <= 0:
                 continue
+            color, contador_color = _color_resaltado(palabras[i], contador_color)
             lineas_ass.append(
                 f"Dialogue: 0,{format_ass_time(t_ini_p)},{format_ass_time(t_fin_p)},Karaoke,,0,0,0,,"
-                f"{_linea_resaltada(palabras, i, corte)}\n"
+                f"{_linea_resaltada(palabras, i, corte, color)}\n"
             )
 
     with open(ass_out_path, 'w', encoding='utf-8') as f:
