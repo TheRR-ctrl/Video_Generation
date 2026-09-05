@@ -76,6 +76,8 @@ COBERTURA_MINIMA_CONTENIDO = 0.02
 # un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
 # tarda ~20-30s (ver prueba local); esto solo cubre ese arranque en frío.
 TIMEOUT_RENDER_SEG = 600
+# El linter no abre navegador; el margen cubre el arranque en frío de npx.
+TIMEOUT_LINT_SEG = 180
 
 RESOLUCIONES = {
     "16:9": (1920, 1080),
@@ -300,6 +302,67 @@ def _ruta_cache(prompt_visual, aspecto):
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
 
 
+def _bloque_correccion(correccion):
+    """Texto que se le agrega al prompt para que el reintento no repita el error.
+
+    Sin esto el reintento vuelve a pedir la composición a ciegas y suele fallar
+    igual. Con el motivo del fallo delante —y con el fixHint del linter cuando
+    viene de ahí— el modelo corrige el punto concreto."""
+    if not correccion:
+        return ""
+    return (
+        "\n\nATENCIÓN: el intento anterior para esta escena falló por lo "
+        f"siguiente. Corregilo en esta versión:\n{correccion}"
+    )
+
+
+def _entorno_cli():
+    env = dict(os.environ)
+    env["HYPERFRAMES_SKIP_SKILLS"] = "1"
+    env["HYPERFRAMES_TELEMETRY_DISABLED"] = "1"
+    return env
+
+
+def _lint(directorio):
+    """Errores que reporta el linter del CLI, o None si la composición está
+    limpia.
+
+    Técnica tomada de la rama claude/video-analysis-generation-1zyqq4, que
+    resolvió el mismo motor en paralelo. `hyperframes lint` no abre navegador y
+    tarda ~1s, contra los 20-30s de un render: atrapa los incumplimientos del
+    contrato (timeline sin registrar, CDN externo, data-duration fuera de rango)
+    antes de pagar un render que iba a fallar igual. Y devuelve un `fixHint` por
+    error, que es lo que se le pasa al modelo en el reintento."""
+    try:
+        res = subprocess.run(
+            ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "lint", directorio, "--json"],
+            capture_output=True, text=True, timeout=TIMEOUT_LINT_SEG, env=_entorno_cli(),
+        )
+        salida = res.stdout or ""
+        inicio = salida.find("{")
+        if inicio < 0:
+            return None  # sin JSON parseable: que decida el render
+        datos = json.loads(salida[inicio:])
+    except Exception as exc:
+        logger.debug(f"lint no utilizable, se sigue al render: {exc}")
+        return None
+
+    if not datos.get("errorCount"):
+        return None
+
+    errores = []
+    for hallazgo in datos.get("findings", []):
+        if hallazgo.get("severity") != "error":
+            continue
+        linea = f"- {hallazgo.get('code', 'error')}: {hallazgo.get('message', '')}"
+        if hallazgo.get("fixHint"):
+            linea += f"\n  Cómo se arregla: {hallazgo['fixHint']}"
+        errores.append(linea)
+    if not errores:
+        return None
+    return "El linter de HyperFrames reportó errores:\n" + "\n".join(errores[:10])
+
+
 def _archivo_valido(ruta):
     return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
@@ -311,7 +374,7 @@ def _limpiar_html(texto):
     return texto.strip()
 
 
-def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
+def _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion=None):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     instrucciones = _PROMPT_SISTEMA.format(
         duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto,
@@ -325,6 +388,7 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
             f"{instrucciones}\n\n"
             f"Tema/idea visual de la escena (no la copies literal, "
             f"interprétala visualmente): {prompt_visual}"
+            + _bloque_correccion(correccion)
         ),
     )
     html = _limpiar_html(respuesta.text or "")
@@ -333,7 +397,7 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo):
     return html
 
 
-def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
+def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, correcciones=None):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
     instrucciones = _PROMPT_SISTEMA_LOTE.format(
@@ -341,8 +405,10 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
         alto_libre=_alto_dibujable(ancho, alto), escala_chart=_escala_chart_story(ancho, alto),
         segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO, n=n,
     )
+    correcciones = correcciones or {}
     lista_escenas = "\n".join(
         f"{i}. {p} (no la copies literal, interprétala visualmente)"
+        + _bloque_correccion(correcciones.get(i - 1))
         for i, p in enumerate(prompts_visuales, 1)
     )
     respuesta = gemini_utils.llamar_con_reintentos(
@@ -467,13 +533,16 @@ def _renderizar_composicion(html, ruta_salida):
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
             f.write('{"id": "escena", "name": "Escena"}')
 
-        env = dict(os.environ)
-        env["HYPERFRAMES_SKIP_SKILLS"] = "1"
-        env["HYPERFRAMES_TELEMETRY_DISABLED"] = "1"
+        # El linter es barato y el render caro: si la composición incumple el
+        # contrato, se sabe en un segundo y no en treinta.
+        errores = _lint(tmp)
+        if errores:
+            raise RuntimeError(errores)
 
         res = subprocess.run(
             ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "render"],
-            cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG, env=env,
+            cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
+            env=_entorno_cli(),
         )
         if res.returncode != 0:
             detalle = (res.stderr or res.stdout or "").strip()[-2000:]
@@ -501,14 +570,16 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
         return ruta_salida
 
     cliente = _obtener_cliente()
+    correccion = None
     for intento in range(1, reintentos + 1):
         try:
-            html = _generar_composicion(cliente, prompt_visual, aspecto, modelo)
+            html = _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion)
             _renderizar_composicion(html, ruta_salida)
             if _archivo_valido(ruta_salida):
                 return ruta_salida
         except Exception as exc:
             logger.warning(f"HyperFrames intento {intento}/{reintentos} falló: {exc}")
+            correccion = str(exc)[-1500:]
 
     return None
 
@@ -532,6 +603,9 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
             rutas[i] = ruta
 
     cliente = _obtener_cliente()
+    # Motivo por el que falló cada escena, para dárselo al modelo en el
+    # siguiente intento en vez de volver a pedirle lo mismo a ciegas.
+    correcciones = {}
     for intento in range(1, reintentos + 1):
         pendientes = [(i, p) for i, p in enumerate(prompts_visuales) if rutas[i] is None]
         if not pendientes:
@@ -541,7 +615,10 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
             lote = pendientes[inicio:inicio + tam_lote]
             indices, prompts_lote = zip(*lote)
             try:
-                htmls = _generar_composiciones_lote(cliente, list(prompts_lote), aspecto, modelo)
+                htmls = _generar_composiciones_lote(
+                    cliente, list(prompts_lote), aspecto, modelo,
+                    {j: correcciones[idx] for j, idx in enumerate(indices) if idx in correcciones},
+                )
             except Exception as exc:
                 logger.warning(f"Lote HyperFrames (intento {intento}/{reintentos}, escenas {list(indices)}) falló al generar HTML: {exc}")
                 continue
@@ -554,6 +631,7 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
                         rutas[idx] = ruta_salida
                 except Exception as exc:
                     logger.warning(f"Render de la escena {idx} (lote) falló: {exc}")
+                    correcciones[idx] = str(exc)[-1500:]
 
     # Rescate uno a uno de lo que quedó sin clip. Una escena sin video de apoyo
     # aborta el día entero (ver generar_video_maestro), así que vale la llamada
