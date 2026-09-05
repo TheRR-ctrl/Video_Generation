@@ -63,10 +63,13 @@ _SEGUNDO_DIAGRAMA_COMPLETO = int(DURACION_ESCENA_SEG * 0.4)
 INSTANTES_MUESTRA_CONTENIDO = (
     DURACION_ESCENA_SEG * 0.5, DURACION_ESCENA_SEG * 0.7, DURACION_ESCENA_SEG * 0.95,
 )
-# Umbral de luminancia (0-255) del píxel más claro: el fondo #0b0f14 mide ~14 y
-# los clips con contenido medidos arrancan en 59, así que 40 separa sin falsos
-# positivos en ninguno de los dos sentidos.
+# Un píxel cuenta como "encendido" a partir de esta luminancia (0-255): el fondo
+# #0b0f14 mide ~14, así que 40 lo deja fuera con margen.
 LUMINANCIA_MINIMA_CONTENIDO = 40
+# Porción del cuadro que tiene que estar encendida para considerar que hay un
+# diagrama. Medido sobre los clips reales: los que dibujan algo ocupan 2.7% o
+# más, y los que solo tienen un título flotando llegan a 1.5%.
+COBERTURA_MINIMA_CONTENIDO = 0.02
 # Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
 # `npx hyperframes@version` tiene que descargar el paquete completo (incluye
 # un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
@@ -166,11 +169,11 @@ así:
 Si la escena trae "Datos:" (o es una COMPARACIÓN DE DATOS/NÚMEROS: tamaños,
 distancias, temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300
 veces dentro de Júpiter"), NO inventes tu propia gráfica animada: usá la
-sub-composición ya construida `chart-story.html` (disponible en el mismo
-directorio que tu HTML), pasándole esos números y esas etiquetas tal cual, así:
+sub-composición ya construida `compositions/chart-story.html` (ya está ahí, al
+lado de tu HTML), pasándole esos números y esas etiquetas tal cual, así:
 
     <div id="grafica" data-composition-id="chart-story"
-         data-composition-src="chart-story.html"
+         data-composition-src="compositions/chart-story.html"
          data-variable-values='{{"type":"bars","data":"1,1300","labels":"Tierra,Júpiter","emphasize":1,"unit":"x","accent":"blue"}}'
          data-start="0" data-duration="{duracion}" data-track-index="0"
          data-width="{ancho}" data-height="{alto}"></div>
@@ -293,6 +296,36 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo):
     return htmls
 
 
+def _instalar_chart_story(directorio):
+    """Copia la sub-composición chart-story dentro del proyecto temporal, en
+    compositions/ y con su duración estirada a la del clip.
+
+    Las dos cosas son necesarias y se descubrieron rindiendo:
+
+    1. El runtime solo resuelve `data-composition-src` si el archivo cuelga de
+       `compositions/`. Con el HTML al lado del index, el render termina bien
+       pero la gráfica no se monta: quedaba el título que Gemini pone encima y
+       debajo el fondo vacío (así se veían las escenas "en negro").
+    2. chart-story viene con duración propia de 5s, declarada en tres lugares
+       (el <html>, su #root y su clip interno). El runtime oculta el clip al
+       pasarse de esos 5s, así que en un clip de 18s la gráfica se dibujaba y
+       desaparecía. Estirar los tres a la duración de la escena la deja armada
+       hasta el último frame, que es justo el envelope que documenta el
+       componente (HOLD = duración - entrada)."""
+    if not _archivo_valido(RUTA_CHART_STORY_VENDOR):
+        return
+
+    with open(RUTA_CHART_STORY_VENDOR, "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace('data-composition-duration="5"', f'data-composition-duration="{DURACION_ESCENA_SEG}"')
+    html = html.replace('data-duration="5"', f'data-duration="{DURACION_ESCENA_SEG}"')
+
+    destino = os.path.join(directorio, "compositions")
+    os.makedirs(destino, exist_ok=True)
+    with open(os.path.join(destino, "chart-story.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+
+
 def _clip_tiene_contenido(ruta_clip):
     """True si el clip muestra algo sobre el fondo en los instantes en que el
     diagrama ya debería estar armado.
@@ -303,21 +336,28 @@ def _clip_tiene_contenido(ruta_clip):
     la escena entera en negro debajo de la narración. Acá se detecta y se trata
     como un render fallido, para que el reintento pida otra composición.
 
-    Mide el píxel más claro del 78% superior del cuadro (el resto va tapado por
-    los subtítulos): el fondo es #0b0f14, o sea luminancia ~14, y los clips
-    buenos medidos llegan a 59 o más."""
+    Mide qué PORCIÓN del 78% superior del cuadro (el resto va tapado por los
+    subtítulos) está encendida sobre el fondo #0b0f14, que mide luminancia ~14.
+    Medir el píxel más claro no alcanzaba: una composición con un título suelto
+    y nada debajo lo pasaba con holgura. Por cobertura la separación es limpia:
+    los clips con un diagrama de verdad ocupan 2.7% o más, y los que solo
+    tienen un rótulo se quedan en 1.5% o menos."""
     for instante in INSTANTES_MUESTRA_CONTENIDO:
         try:
             res = subprocess.run(
                 ["ffmpeg", "-v", "error", "-ss", f"{instante:.2f}", "-i", ruta_clip,
-                 "-frames:v", "1", "-vf", "crop=iw:ih*0.78:0:0,scale=64:36",
+                 "-frames:v", "1", "-vf", "crop=iw:ih*0.78:0:0,scale=160:90",
                  "-f", "rawvideo", "-pix_fmt", "gray", "-"],
                 capture_output=True, timeout=60,
             )
         except Exception as exc:
             logger.warning(f"No se pudo inspeccionar {ruta_clip}: {exc}")
             return True  # ante la duda, no descartes un clip que quizá esté bien
-        if res.stdout and max(res.stdout) >= LUMINANCIA_MINIMA_CONTENIDO:
+        pixeles = res.stdout
+        if not pixeles:
+            continue
+        encendidos = sum(1 for p in pixeles if p >= LUMINANCIA_MINIMA_CONTENIDO)
+        if encendidos / len(pixeles) >= COBERTURA_MINIMA_CONTENIDO:
             return True
     return False
 
@@ -349,8 +389,7 @@ def _renderizar_composicion(html, ruta_salida):
         with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
             f.write(html)
         shutil.copyfile(RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
-        if _archivo_valido(RUTA_CHART_STORY_VENDOR):
-            shutil.copyfile(RUTA_CHART_STORY_VENDOR, os.path.join(tmp, "chart-story.html"))
+        _instalar_chart_story(tmp)
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
             f.write('{"id": "escena", "name": "Escena"}')
 
