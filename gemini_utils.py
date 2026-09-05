@@ -44,10 +44,16 @@ def _clasificar_error(exc):
     return None
 
 
-def llamar_con_reintentos(fn, *args, reintentos=4, espera_base_seg=20.0, **kwargs):
+def llamar_con_reintentos(fn, *args, reintentos=6, espera_base_seg=20.0, **kwargs):
     """Llama a fn(*args, **kwargs) reintentando en 429 (cuota) y en los errores
     transitorios del servidor (503/500). Cualquier otro error de API se propaga
-    de inmediato: no tiene sentido reintentar un 400 o un 403."""
+    de inmediato: no tiene sentido reintentar un 400 o un 403.
+
+    Seis intentos porque cuatro no alcanzaron: en la corrida 33994751090 el
+    modelo estuvo sobrecargado más de los 140s que cubrían 3 esperas (20+40+80)
+    y se cayó la etapa de plan, y con ella las de guion y video. Con seis, el
+    backoff exponencial espera hasta ~10 minutos antes de rendirse, que es
+    tiempo de runner desatendido y no de nadie mirando la pantalla."""
     for intento in range(1, reintentos + 1):
         try:
             return fn(*args, **kwargs)
