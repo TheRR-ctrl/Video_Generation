@@ -228,12 +228,21 @@ def _obtener_cliente():
     return _client
 
 
+def _version_instrucciones():
+    """Huella de las instrucciones de dibujo vigentes, para la clave de caché.
+
+    El prompt de sistema decide cómo se ve el clip tanto como la descripción de
+    la escena. Sin esto, mejorar las reglas de dibujo no cambia nada en el video
+    siguiente: la caché entre corridas devuelve los clips hechos con las reglas
+    viejas, y la corrida "termina bien" sin haber aplicado el cambio."""
+    return hashlib.sha256(_PROMPT_SISTEMA.encode("utf-8")).hexdigest()[:8]
+
+
 def _ruta_cache(prompt_visual, aspecto):
-    # La duración entra en la clave: un clip cacheado con otra duración ya no
-    # sirve (se armó para un bucle distinto), y sin esto la caché entre
-    # corridas lo revive silenciosamente.
+    # Además del prompt de la escena, entran la duración (un clip armado para
+    # otro largo ya no sirve) y la versión de las instrucciones de dibujo.
     clave = hashlib.sha256(
-        f"{aspecto}|{DURACION_ESCENA_SEG}|{prompt_visual}".encode("utf-8")
+        f"{aspecto}|{DURACION_ESCENA_SEG}|{_version_instrucciones()}|{prompt_visual}".encode("utf-8")
     ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
