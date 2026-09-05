@@ -87,6 +87,25 @@ DESC_DATOS_VISUAL = (
     "es preferible un diagrama sin números a un dato inventado."
 )
 
+# Una escena narra 15-25 segundos. Con un solo dibujo, la imagen se queda quieta
+# todo ese rato y el video se siente lento; los canales que funcionan en este
+# nicho cambian de imagen cada 3-5 segundos. Por eso cada escena se divide en
+# planos: varios dibujos que se turnan mientras la locución sigue de corrido.
+PLANOS_POR_ESCENA = (3, 5)
+
+DESC_PLANOS_VISUAL = (
+    "Los PLANOS de la escena: entre 3 y 5 dibujos que se van turnando en pantalla "
+    "mientras la narración avanza, en el orden en que aparecen. No son cinco versiones "
+    "del mismo dibujo ni cinco escenas distintas: son los momentos de UNA misma idea, "
+    "y juntos tienen que contar el arco de lo que se está narrando. "
+    "Por ejemplo, si la narración dice que el alivio inmediato gana sobre la meta "
+    "futura: (1) una balanza equilibrada con los dos platos rotulados, (2) el plato del "
+    "alivio bajando de golpe, (3) el de la meta futura quedando arriba y apagándose. "
+    "Cada plano se describe igual que un diagrama suelto —qué elementos hay y qué "
+    "relación muestran— y comparte las etiquetas y los datos de la escena. El primero "
+    "presenta, los del medio desarrollan y el último deja la conclusión a la vista."
+)
+
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 
 
@@ -106,6 +125,14 @@ def construir_schema_guion(motor_broll):
     requeridos = ["texto", "prompt_visual"]
 
     if es_motion:
+        propiedades["planos_visuales"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": PLANOS_POR_ESCENA[0],
+            "maxItems": PLANOS_POR_ESCENA[1],
+            "description": DESC_PLANOS_VISUAL,
+        }
+        requeridos.append("planos_visuales")
         propiedades["tipo_visual"] = {
             "type": "string",
             "enum": TIPOS_VISUAL,
@@ -172,7 +199,12 @@ lo que se está narrando, no una decoración abstracta que acompaña:
 - Al escribir la narración, buscá activamente que haya algo comparable, medible o
   secuenciable en cada escena — una proporción, dos alternativas enfrentadas, tres
   pasos encadenados. Eso es lo que hace que el video se pueda dibujar. Sin inventar
-  estudios ni cifras falsas: si no hay un dato real, comparás cualidades, no números."""
+  estudios ni cifras falsas: si no hay un dato real, comparás cualidades, no números.
+- Cada escena se dibuja en varios PLANOS que se turnan mientras la locución sigue
+  de corrido, uno cada 4-6 segundos. No son escenas distintas ni el mismo dibujo
+  repetido: son los momentos de una misma idea. Pensalos como el arco de la
+  escena — el primero planta la situación, los del medio la desarrollan, el último
+  deja a la vista la conclusión de la que habla la narración en ese tramo."""
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -231,32 +263,48 @@ def construir_bloque_guion(dia, guion):
     ]
     for escena in guion["escenas"]:
         partes.append("### ESCENA")
-        partes.append(f"VISUAL: {construir_prompt_visual(escena)}")
+        for prompt_plano in construir_prompts_visuales(escena):
+            partes.append(f"VISUAL: {prompt_plano}")
         partes.append(f"TEXTO: {escena['texto'].strip()}")
     return "\n".join(partes)
 
 
-def construir_prompt_visual(escena):
-    """Aplana los campos visuales de la escena en la única línea VISUAL: que
-    guarda guion.txt (y que lee generar_video_maestro.py). El tipo, las
-    etiquetas y los datos van explícitos en el texto porque el motor de b-roll
-    recibe esta línea tal cual: es lo que le dice qué diagrama dibujar y con qué
-    rótulos, en vez de dejarlo interpretar una metáfora libre."""
-    partes = [escena["prompt_visual"].strip()]
+def construir_prompts_visuales(escena):
+    """Una línea VISUAL: por plano de la escena, listas para guion.txt.
+
+    Cada plano lleva el arquetipo, las etiquetas y los datos de la escena
+    repetidos, porque el motor de b-roll recibe cada línea suelta y por separado:
+    sin eso, el segundo plano en adelante se dibujaría sin saber qué comparar ni
+    con qué rótulos. Una escena sin planos (motor Veo, o un guion viejo) devuelve
+    una sola línea, que es como funcionaba antes."""
+    contexto = []
 
     tipo = (escena.get("tipo_visual") or "").strip()
     if tipo:
-        partes.insert(0, f"[{tipo}]")
+        contexto.append(f"[{tipo}]")
 
+    sufijo = []
     etiquetas = [e.strip() for e in escena.get("etiquetas_visual") or [] if e and e.strip()]
     if etiquetas:
-        partes.append(f"Etiquetas: {', '.join(etiquetas)}.")
+        sufijo.append(f"Etiquetas: {', '.join(etiquetas)}.")
 
     datos = (escena.get("datos_visual") or "").strip()
     if datos:
-        partes.append(f"Datos: {datos}.")
+        sufijo.append(f"Datos: {datos}.")
 
-    return " ".join(partes)
+    planos = [p.strip() for p in escena.get("planos_visuales") or [] if p and p.strip()]
+    if not planos:
+        planos = [escena["prompt_visual"].strip()]
+
+    lineas = []
+    for i, plano in enumerate(planos, 1):
+        partes = list(contexto)
+        if len(planos) > 1:
+            partes.append(f"(plano {i} de {len(planos)})")
+        partes.append(plano)
+        partes.extend(sufijo)
+        lineas.append(" ".join(partes))
+    return lineas
 
 
 def main():

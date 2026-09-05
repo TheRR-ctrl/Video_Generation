@@ -48,11 +48,12 @@ RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ven
 # dejar que Gemini invente su propia animación de datos desde cero. Se ofrece
 # como opción en el prompt de sistema para escenas de comparación de datos.
 RUTA_CHART_STORY_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "chart-story.html")
-# Igualado al largo típico de la narración de una escena (15-25s, ver
-# script_writer.py). Antes eran 8s: como generar_video_maestro.py repite el
-# clip con -stream_loop hasta cubrir la escena, el diagrama se armaba y se
-# desarmaba dos veces por escena, con el cuadro vacío en cada corte.
-DURACION_ESCENA_SEG = 18
+# Un clip cubre ahora un PLANO, no una escena entera: la escena narra 15-25s y
+# se reparte entre 3 y 5 planos (ver script_writer.py), o sea 4-6s cada uno.
+# Antes eran 18s, el largo de la escena completa, porque había un solo dibujo
+# por escena. Dejarlo en 18 haría que en su tramo de 5s solo se viera el
+# armado del diagrama y nunca el diagrama entero.
+DURACION_ESCENA_SEG = 6
 # Momento en que el diagrama tiene que estar armado del todo (ver _PROMPT_SISTEMA):
 # a partir de ahí ya nada aparece ni desaparece, para que el clip se entienda
 # entrando en cualquier segundo del bucle.
@@ -131,9 +132,11 @@ funcione):
 - No hay narración dentro del clip: el video es puramente visual, de
   {duracion} segundos.
 
-El clip se reproduce EN BUCLE debajo de una narración más larga que él, así
-que cualquier instante en que el cuadro quede vacío o a medio dibujar se ve
-como un error de reproducción. Por eso:
+Lo que se te pide es UN PLANO de una escena, no la escena entera: la escena se
+reparte entre varios planos que se turnan mientras la locución sigue de
+corrido, y el tuyo ocupa unos segundos. Se reproduce en bucle dentro de su
+tramo, así que cualquier instante en que el cuadro quede vacío o a medio
+dibujar se ve como un error de reproducción. Por eso:
 - El primer elemento aparece dentro del primer medio segundo: nunca arranques
   con el cuadro en negro.
 - El diagrama tiene que estar COMPLETO (todos sus elementos y todos sus

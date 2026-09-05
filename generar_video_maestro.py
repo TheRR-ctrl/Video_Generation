@@ -64,6 +64,7 @@ RESOLUCIONES = {
 }
 
 DURACION_INTRO_CARD_SEG = 3.0
+FPS_VIDEO = 30
 
 # Reglas de subtitulado. Agrupar de a N palabras fijas dejaba cada bloque 1.4s
 # en pantalla (medido sobre el video terminado: 43 bloques por minuto) y partía
@@ -608,6 +609,51 @@ def seleccionar_musica_fondo(tono):
 # ---------------------------------------------------------
 # PARSEO DEL GUION
 # ---------------------------------------------------------
+def armar_video_escena(clips_base, dur_escena, w, h, ruta_salida, gestor, num_escena):
+    """Monta el video de una escena repartiendo su duración entre los planos.
+
+    La narración de la escena sigue de corrido; lo que cambia es la imagen, cada
+    `dur_escena / n` segundos. Con un solo plano el resultado es el de siempre:
+    ese clip en bucle hasta cubrir la narración."""
+    filtro = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS_VIDEO}"
+
+    # El reparto se hace en FOTOGRAMAS, no en segundos. Cortando por tiempo,
+    # ffmpeg redondea cada tramo al fotograma más cercano y con varios planos por
+    # escena esos redondeos se suman: el video queda unas décimas más corto que
+    # su narración, y el desfase se acumula escena a escena hasta que la imagen
+    # va notoriamente atrasada respecto de la voz al final del video.
+    total_frames = max(1, round(dur_escena * FPS_VIDEO))
+    por_plano, sobrante = divmod(total_frames, len(clips_base))
+    frames = [por_plano + (1 if j < sobrante else 0) for j in range(len(clips_base))]
+
+    tramos = []
+    for j, (clip, n_frames) in enumerate(zip(clips_base, frames), 1):
+        if n_frames <= 0:
+            continue
+        tramo = gestor.registrar(f"escena_{num_escena}_plano_{j}.mp4")
+        ejecutar_comando(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-stream_loop", "-1", "-i", clip, "-vf", filtro, "-frames:v", str(n_frames),
+             "-an", "-c:v", "libx264", "-preset", "ultrafast", tramo],
+            f"FFmpeg: plano {j} de la escena {num_escena}",
+        )
+        tramos.append(tramo)
+
+    if len(tramos) == 1:
+        shutil.copyfile(tramos[0], ruta_salida)
+        return
+
+    lista = gestor.registrar(f"escena_{num_escena}_planos.txt")
+    with open(lista, "w", encoding="utf-8") as f:
+        for tramo in tramos:
+            f.write(f"file '{os.path.abspath(tramo)}'\n")
+    ejecutar_comando(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+         "-i", lista, "-c", "copy", ruta_salida],
+        f"FFmpeg: unión de los planos de la escena {num_escena}",
+    )
+
+
 def parsear_bloque_guion(bloque):
     dia = int(re.search(r'#\s*Dia:\s*(\d+)', bloque).group(1))
     tema = re.search(r'#\s*Tema:\s*(.+)', bloque).group(1).strip()
@@ -622,8 +668,16 @@ def parsear_bloque_guion(bloque):
         m_texto = re.search(r'TEXTO:\s*(.+)', trozo, re.DOTALL)
         if not (m_visual and m_texto):
             continue
+        # Una escena puede traer varias líneas VISUAL:, una por plano. Es lo que
+        # permite que la imagen cambie cada pocos segundos en vez de quedarse
+        # fija los 15-25s que dura la narración. Los guiones viejos traen una
+        # sola y siguen funcionando: quedan como una escena de un plano.
+        planos = [
+            p.strip() for p in re.split(r'\n\s*VISUAL:\s*', m_visual.group(1).strip()) if p.strip()
+        ]
         escenas.append({
-            "visual": m_visual.group(1).strip(),
+            "planos": planos,
+            "visual": planos[0],
             "texto": m_texto.group(1).strip(),
         })
 
@@ -666,8 +720,11 @@ def renderizar_una_historia(bloque, cfg, num=1):
         motor = cfg.get("motor_broll", "veo")
         rutas_broll_lote = None
         if motor == "hyperframes":
-            prompts_visuales = [e["visual"] for e in info["escenas"]]
-            print(f" ├─ 🎞️ Generando {len(prompts_visuales)} video(s) de apoyo en lotes (hyperframes)...")
+            # Se piden todos los planos de todas las escenas de una sola vez: el
+            # lote es lo que hace viable la cuota de Gemini, y con varios planos
+            # por escena hay bastantes más pedidos que antes.
+            prompts_visuales = [p for e in info["escenas"] for p in e["planos"]]
+            print(f" ├─ 🎞️ Generando {len(prompts_visuales)} plano(s) de apoyo en lotes (hyperframes)...")
             rutas_broll_lote = hyperframes_broll.generar_clips_lote_cacheados(
                 prompts_visuales, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"],
                 tam_lote=cfg.get("tam_lote_hyperframes", hyperframes_broll.TAM_LOTE_DEFAULT),
@@ -679,6 +736,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         idx_srt = 1
         t_acum = 0.0
         texto_completo = []
+        base_plano = 0  # posición de la escena dentro de rutas_broll_lote, que es plana
 
         for i, escena in enumerate(info["escenas"], 1):
             print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución ({motor_tts})...")
@@ -697,28 +755,31 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if dur_escena <= 0:
                 raise RuntimeError(f"Duración inválida en el audio de la escena {i}.")
 
-            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
+            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: {len(escena['planos'])} plano(s) de apoyo ({motor})...")
             if motor == "manim":
-                ruta_clip_base = manim_broll.generar_clip_cacheado(
-                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
-                )
+                clips_base = [
+                    manim_broll.generar_clip_cacheado(
+                        plano, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
+                    )
+                    for plano in escena["planos"]
+                ]
             elif motor == "hyperframes":
-                ruta_clip_base = rutas_broll_lote[i - 1]
+                clips_base = rutas_broll_lote[base_plano:base_plano + len(escena["planos"])]
             else:
-                ruta_clip_base = veo_broll.generar_clip_cacheado(
-                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
-                )
-            if not ruta_clip_base:
+                clips_base = [
+                    veo_broll.generar_clip_cacheado(
+                        plano, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
+                    )
+                    for plano in escena["planos"]
+                ]
+            base_plano += len(escena["planos"])
+
+            clips_base = [c for c in clips_base if c]
+            if not clips_base:
                 raise RuntimeError(f"No se pudo generar el video de apoyo de la escena {i}.")
 
             ruta_clip_escena = gestor.registrar(f"escena_{i}_video.mp4")
-            filtro = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30"
-            ejecutar_comando(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-stream_loop", "-1", "-i", ruta_clip_base, "-t", f"{dur_escena:.2f}",
-                 "-vf", filtro, "-an", "-c:v", "libx264", "-preset", "ultrafast", ruta_clip_escena],
-                f"FFmpeg: ajuste de duración de escena {i}",
-            )
+            armar_video_escena(clips_base, dur_escena, w, h, ruta_clip_escena, gestor, i)
             if not archivo_valido(ruta_clip_escena):
                 raise RuntimeError(f"El clip ajustado de la escena {i} no es válido.")
 
