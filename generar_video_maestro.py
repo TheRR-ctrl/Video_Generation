@@ -31,6 +31,7 @@ import tts_edge
 import veo_broll
 import manim_broll
 import hyperframes_broll
+import hyperframes_audio_mix
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -51,6 +52,8 @@ CONFIG_DEFAULT = {
     "voz_masculina_edge": tts_edge.VOZ_FALLBACK_MASCULINA,
     "voz_femenina_edge": tts_edge.VOZ_FALLBACK_FEMENINA,
     "reintentar_existentes": False,
+    "ducking_hyperframes": True,
+    "fuerza_carve_musica": hyperframes_audio_mix.FUERZA_CARVE_DEFAULT,
 }
 
 RESOLUCIONES = {
@@ -475,8 +478,35 @@ def renderizar_una_historia(bloque, cfg, num=1):
         musica = seleccionar_musica_fondo(tono)
         print(f" ├─ 🎼 Tono: {tono.upper()} | Música: {os.path.basename(musica) if musica else 'ninguna'}")
 
+        # Mezcla con ducking nativo de HyperFrames (voiceover carve): recorta
+        # solo las bandas de frecuencia que ocupa la voz en vez de bajar el
+        # volumen fijo de toda la música (mezcla estática de siempre, que
+        # queda como fallback si el carve falla o está desactivado).
+        audio_final = audio_narracion
+        usar_musica_estatica = bool(musica)
+        if musica and cfg.get("ducking_hyperframes", True):
+            fade_inicio = max(0.0, dur_total - 2.0)
+            musica_looped = gestor.registrar(f"musica_looped{os.path.splitext(musica)[1] or '.mp3'}")
+            ejecutar_comando(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-stream_loop", "-1", "-i", musica, "-t", f"{dur_total:.3f}",
+                 "-af", f"afade=t=out:st={fade_inicio:.2f}:d=2",
+                 "-c:a", "aac", "-b:a", "192k", musica_looped],
+                "FFmpeg: preparar música de fondo (loop + fade)",
+            )
+            audio_mezclado = gestor.registrar("audio_mezclado.m4a")
+            print(" ├─ 🎚️ Mezclando narración + música (ducking nativo de HyperFrames)...")
+            if hyperframes_audio_mix.mezclar_narracion_musica(
+                audio_narracion, musica_looped, dur_total, audio_mezclado,
+                fuerza=cfg.get("fuerza_carve_musica", hyperframes_audio_mix.FUERZA_CARVE_DEFAULT),
+            ):
+                audio_final = audio_mezclado
+                usar_musica_estatica = False
+            else:
+                print(" ├─ ⚠️ Ducking nativo falló, se usa mezcla estática de música.")
+
         f_ass = ass_karaoke.replace('\\', '\\\\').replace(':', '\\:')
-        if musica:
+        if usar_musica_estatica:
             fade_inicio = max(0.0, dur_total - 2.0)
             fc = (
                 f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
@@ -492,7 +522,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
                 f"[bgc]ass='{f_ass}'[vout]"
             )
-            cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_narracion,
+            cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_final,
                       "-i", img_tarjeta, "-filter_complex", fc, "-map", "[vout]", "-map", "1:a:0"]
 
         flags_audio = ["-map_metadata", "-1", "-c:a", "aac", "-b:a", "192k", "-shortest"]

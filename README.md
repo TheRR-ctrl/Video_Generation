@@ -113,6 +113,15 @@ el pipeline por primera vez.
   motor "de a una por escena" agota esa cuota antes de terminar. Un reintento
   solo vuelve a pedir las escenas que fallaron, no el lote entero.
 
+  **Gráficas de datos (`vendor/chart-story.html`):** cuando una escena es una
+  comparación de números (tamaños, distancias, temperaturas...), el prompt de
+  sistema le ofrece a Gemini una sub-composición ya construida del catálogo
+  oficial de HyperFrames (barras/línea/donut/progreso, valores exactos, sin
+  redondear) en vez de dejarlo inventar su propia animación de datos desde
+  cero — menos renders rotos por HTML/SVG mal generado, y una gráfica con
+  mejor terminado. Vendorizada igual que `gsap.min.js` (CDN reemplazado por
+  la copia local) para que siga sin depender de red.
+
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir
 sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run
@@ -149,6 +158,32 @@ guardaría nada del progreso real ya hecho.
 
 Si el pipeline te está topando con 429 `RESOURCE_EXHAUSTED` en la etapa de
 locución, cambiá `motor_tts` a `"edge"`.
+
+## Mezcla de música con ducking nativo (`hyperframes_audio_mix.py`)
+
+La narración y la música de fondo del día se mezclan con el **voiceover
+carve** de HyperFrames (skill `hyperframes-audio`) en vez de una mezcla
+estática de ffmpeg. La diferencia:
+
+- **Antes:** volumen fijo de música al 8% durante todo el video
+  (`amix` + `volume=0.08`), sin importar si hay narración en ese instante o
+  no — la música pierde presencia todo el tiempo, la haya o no.
+- **Ahora:** el carve analiza en qué bandas de frecuencia y en qué momentos
+  exactos hay voz, y solo recorta esas bandas de la música justo ahí. La
+  música conserva sus graves y agudos y sigue sonando como música, incluso
+  con narración encima — y vuelve a su volumen normal en los silencios.
+
+Implementación (`hyperframes_audio_mix.py`): arma una composición mínima de
+HyperFrames con la narración del día como voz y la música (ya recortada a la
+duración exacta y con fade-out) como "bed", corre `vendor/carve.mjs`
+(vendorizado del propio HyperFrames) para que escriba la cadena de EQ +
+automatización, renderiza esa composición (video descartable, solo importa
+el audio) y extrae la pista mezclada con ffmpeg. Requiere `@hyperframes/core`
+instalado vía `npm ci` (ver `package.json`) — si Node/npm/el carve fallan por
+lo que sea, el pipeline cae automáticamente a la mezcla estática de siempre
+(`ducking_hyperframes: false` en config.json la desactiva a propósito).
+`fuerza_carve_musica` (default 0.3, rango 0-1) controla qué tan agresivo es
+el recorte — más alto en videos donde la música es más protagonista.
 
 ## Música de fondo (`actualizar_musica.py`)
 

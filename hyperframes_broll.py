@@ -42,6 +42,12 @@ TAM_LOTE_DEFAULT = 5
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
+# Sub-composición del catálogo oficial de HyperFrames (registry/components/
+# chart-story), vendorizada tal cual: construye una gráfica (barras/línea/
+# donut/progreso) animada y determinista a partir de datos exactos, en vez de
+# dejar que Gemini invente su propia animación de datos desde cero. Se ofrece
+# como opción en el prompt de sistema para escenas de comparación de datos.
+RUTA_CHART_STORY_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "chart-story.html")
 DURACION_ESCENA_SEG = 8
 # Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
 # `npx hyperframes@version` tiene que descargar el paquete completo (incluye
@@ -84,6 +90,26 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
   determinista, mismo resultado en cada frame sin importar el orden en que
   se pidan).
 - No hay narración: el video es puramente visual, de {duracion} segundos.
+
+Si la escena es una COMPARACIÓN DE DATOS/NÚMEROS (tamaños, distancias,
+temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300 veces
+dentro de Júpiter"), no inventes tu propia gráfica animada: usa la
+sub-composición ya construida `chart-story.html` (disponible en el mismo
+directorio que tu HTML), así:
+
+    <div id="grafica" data-composition-id="chart-story"
+         data-composition-src="chart-story.html"
+         data-variable-values='{{"type":"bars","data":"1,1300","labels":"Tierra,Júpiter","emphasize":1,"unit":"x","accent":"blue"}}'
+         data-start="0" data-duration="{duracion}" data-track-index="0"
+         data-width="{ancho}" data-height="{alto}"></div>
+
+Ese `<div>` va DENTRO de tu `#root` normal (junto a cualquier otro elemento
+de la escena). `type` puede ser "bars", "line", "donut" o "progress"; `data`
+son los números reales separados por coma (se muestran exactos, sin
+redondear); `emphasize` es el índice del dato a resaltar; `accent` es
+"green", "blue" o "violet". No declares tú mismo un timeline para esta
+sub-composición ni le pongas `class="clip"` — ella ya trae su propia
+animación y su propio registro en window.__timelines["chart-story"].
 """
 
 _PROMPT_SISTEMA_LOTE = _PROMPT_SISTEMA + """
@@ -185,6 +211,8 @@ def _renderizar_composicion(html, ruta_salida):
         with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
             f.write(html)
         shutil.copyfile(RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
+        if _archivo_valido(RUTA_CHART_STORY_VENDOR):
+            shutil.copyfile(RUTA_CHART_STORY_VENDOR, os.path.join(tmp, "chart-story.html"))
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
             f.write('{"id": "escena", "name": "Escena"}')
 

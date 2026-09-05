@@ -68,6 +68,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
+
+      - name: Instalar @hyperframes/core (para el voiceover carve de vendor/carve.mjs)
+        run: npm ci
 
       - name: Precalentar HyperFrames (descarga el paquete y su Chromium una sola vez)
         if: ${{ github.event.inputs.motor_broll == 'hyperframes' }}
