@@ -59,6 +59,38 @@ Dos variantes con textos parecidos pero significado distinto — leé el mensaje
 - `quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier` → tier gratuito agotado (20 req/día para `gemini-3.6-flash`). Solución real: activar facturación (ver siguiente sección). Solución temporal: esperar — la cuota se recupera lentamente a lo largo del día, no de golpe a medianoche.
 - `Your prepayment credits are depleted` → facturación activa pero saldo prepago en $0. Cargar saldo en `aistudio.google.com/billing` (NO en la consola de Cloud Billing general — ese es un sistema de saldo separado, ver abajo).
 
+### `403 PERMISSION_DENIED` con `Lightning dunning decision is deny for project: projects/<numero>`
+
+**Es facturación, no configuración ni código.** "Dunning" es el término de cobranzas:
+Google marcó el proyecto como moroso y le cortó el acceso a la API. No se arregla
+regenerando la key, ni cambiando restricciones, ni tocando el repo — la key es
+válida y el proyecto existe; lo que está denegado es el proyecto entero.
+
+Cómo se distingue de los otros 403: `API_KEY_SERVICE_BLOCKED` culpa a la *key*
+(restricciones de API), este culpa al *proyecto* y nombra su número. Y a
+diferencia de un 429, no se recupera esperando: no es un tope de uso, es una
+decisión de cobranza que sigue vigente hasta que se salda.
+
+Bloquea TODO el proyecto de una: el modelo de texto (plan, guion, HyperFrames),
+el TTS de Gemini y Veo. Si en la misma sesión viste 429 en Veo poco antes, no lo
+leas como cuota agotada por uso: el mensaje "check your plan and billing details"
+sin `quotaId` puede ser el mismo problema de cobranza asomando primero por ahí.
+
+Qué mirar, en este orden (todo del lado del usuario, no hay arreglo por código):
+1. `payments.google.com` → ¿hay un pago rechazado o un método de pago vencido?
+   Es la causa más frecuente: la tarjeta falló y el saldo que la UI muestra
+   acreditado no llegó a cobrarse.
+2. `aistudio.google.com/billing` → ¿el saldo prepago está en cero o con aviso de
+   "saldo pendiente"?
+3. `console.cloud.google.com/billing` → ¿la cuenta de facturación del proyecto
+   `<numero>` sigue vinculada y activa?
+
+Mientras tanto el pipeline no puede correr ninguna etapa que use Gemini, así que
+no tiene sentido relanzarlo "a ver si esta vez sí": va a fallar igual, y si se
+lanza con `regenerar_guion`/`regenerar_plan` encima **borra el guion y los clips
+cacheados antes de descubrir que no puede reescribirlos** (pasó en la corrida
+34003737710). Si hay que relanzar para probar otra cosa, hacelo sin esos flags.
+
 ### Facturación: modelo de "prepago", no de "pago por uso" automático
 
 `aistudio.google.com/billing` usa un sistema de **crédito prepago** (mínimo de compra variable según moneda/región — en México fue MXN 500, no los $5 USD que documenta Google para cuentas en USD): comprás saldo por adelantado, se descuenta con el uso, se corta el servicio a $0. Esto es **distinto** de:
