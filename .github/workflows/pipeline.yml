@@ -31,10 +31,15 @@ on:
         type: choice
         options: ["plan", "guion", "video", "publicar"]
       usar_guion_semilla:
-        description: "Copiar guion.semilla.txt (escrito a mano, versionado en el repo) como guion de esta corrida. Con desde_etapa=video y hasta_etapa=video, la corrida entera no toca la API de Gemini"
+        description: "Copiar un guion semilla (escrito a mano, versionado en el repo) como guion de esta corrida. Con desde_etapa=video y hasta_etapa=video, la corrida entera no toca la API de Gemini"
         required: false
         default: false
         type: boolean
+      archivo_guion_semilla:
+        description: "Qué archivo semilla copiar (solo si usar_guion_semilla=true). El de siempre es guion.semilla.txt; usa otro para probar un guion distinto (p. ej. uno de prueba para motor_broll=fotos) sin tocar el principal"
+        required: false
+        default: "guion.semilla.txt"
+        type: string
       hasta_etapa:
         description: "Correr solo hasta esta etapa (plan, guion, video, publicar)"
         required: false
@@ -165,8 +170,8 @@ jobs:
       - name: Usar el guion semilla versionado en el repo (usar_guion_semilla)
         if: ${{ github.event.inputs.usar_guion_semilla == 'true' }}
         run: |
-          cp guion.semilla.txt guion.txt
-          echo "Guion tomado de guion.semilla.txt (sin llamar al modelo):"
+          cp "${{ github.event.inputs.archivo_guion_semilla || 'guion.semilla.txt' }}" guion.txt
+          echo "Guion tomado de ${{ github.event.inputs.archivo_guion_semilla || 'guion.semilla.txt' }} (sin llamar al modelo):"
           head -4 guion.txt
 
       - name: Restaurar credenciales de YouTube

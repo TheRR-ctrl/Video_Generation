@@ -1,0 +1,12 @@
+# Dia: 1
+# Tema: Prueba técnica del motor de fotos de banco (Pexels) para el formato emocional.
+# TituloHook: A veces el silencio también es una forma de compañía.
+# DuracionObjetivoMin: 0.4
+### ESCENA
+VISUAL: habitación vacía luz de tarde
+VISUAL: ventana lluvia silencio
+TEXTO: Hay noches en las que el silencio pesa distinto, y no siempre es tristeza lo que se siente.
+### ESCENA
+VISUAL: taza de te sola mesa madera
+VISUAL: atardecer solitario horizonte
+TEXTO: A veces solo hace falta quedarse quieto un rato, sin buscarle explicación a lo que se siente.
