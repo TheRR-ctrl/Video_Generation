@@ -31,6 +31,7 @@ import tts_gemini
 import tts_edge
 import veo_broll
 import manim_broll
+import fondos_stock
 import hyperframes_broll
 import hyperframes_audio_mix
 import formato_video
@@ -823,6 +824,16 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 ]
             elif motor == "hyperframes":
                 clips_base = rutas_broll_lote[base_plano:base_plano + len(escena["planos"])]
+            elif motor == "fotos":
+                # Formato emocional/poético: cada VISUAL: es directamente la
+                # consulta de búsqueda en Pexels, no un [arquetipo]. Una foto
+                # por plano, con Ken Burns aplicado en fondos_stock.
+                clips_base = [
+                    fondos_stock.generar_clip_cacheado(
+                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
+                    )
+                    for plano in escena["planos"]
+                ]
             else:
                 clips_base = [
                     veo_broll.generar_clip_cacheado(
