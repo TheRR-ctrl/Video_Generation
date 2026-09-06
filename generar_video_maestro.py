@@ -27,6 +27,7 @@ import tempfile
 from datetime import timedelta
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formatos_canal
 import tts_gemini
 import tts_edge
 import veo_broll
@@ -65,11 +66,14 @@ RESOLUCIONES = {
     "1:1": (1080, 1080),
 }
 
-# Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts). El
-# rango sale del pipeline hermano: lo bastante angosto para que la voz siga
-# sonando natural, lo bastante ancho para que dos videos seguidos del canal no
-# suenen idénticos.
-TONOS_LOCUCION = ("-8Hz", "-4Hz", "+0Hz", "+4Hz")
+# Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts).
+# Corrido hacia abajo respecto del rango original del pipeline hermano
+# (-8Hz a +4Hz): un pitch más grave se lee como más cálido/cercano, que es lo
+# que pide el género del canal (psicología, reflexión) frente al original,
+# pensado para historias con más urgencia narrativa. Se mantiene angosto para
+# que la voz siga sonando natural, y con cuatro valores para que dos videos
+# seguidos no suenen idénticos.
+TONOS_LOCUCION = ("-10Hz", "-6Hz", "-2Hz", "+2Hz")
 DURACION_INTRO_CARD_SEG = 3.0
 # En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
 # retrasan el hook, que es justo lo que decide si el espectador se queda. El
@@ -146,7 +150,7 @@ def cargar_config():
                 cfg.update(json.load(f))
         except Exception as exc:
             logger.warning(f"No se pudo leer {RUTA_CONFIG}, usando valores por defecto: {exc}")
-    return cfg
+    return formatos_canal.aplicar_formato(cfg)
 
 
 # ---------------------------------------------------------

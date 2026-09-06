@@ -1,4 +1,5 @@
 {
+  "formato_canal": "manual",
   "carpeta_salida": "Videos Creados",
   "canales_referencia": [
     "https://www.youtube.com/watch?v=ca-eycdLnaY",
@@ -9,7 +10,7 @@
   "motor_tts": "edge",
   "voz_masculina": "Charon",
   "voz_femenina": "Kore",
-  "velocidad_locucion": "+18%",
+  "velocidad_locucion": "+8%",
   "voz_masculina_edge": "es-MX-JorgeNeural",
   "voz_femenina_edge": "es-MX-DaliaNeural",
   "genero_narrador": "masculino",

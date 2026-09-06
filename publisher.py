@@ -30,6 +30,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formatos_canal
 import formato_video
 from google import genai
 from google.genai import types as genai_types
@@ -77,7 +78,7 @@ def cargar_config():
     if os.path.exists(RUTA_CONFIG):
         with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
             cfg.update(json.load(f))
-    return cfg
+    return formatos_canal.aplicar_formato(cfg)
 
 
 def cargar_json(ruta, default):

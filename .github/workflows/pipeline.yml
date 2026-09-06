@@ -46,6 +46,16 @@ on:
         default: "publicar"
         type: choice
         options: ["plan", "guion", "video", "publicar"]
+      formato_canal:
+        # Ver formatos_canal.py. Un preset con nombre fija de una sola vez
+        # motor_broll + motor_tts + carpeta_salida + hashtags; pisa a los
+        # campos sueltos de abajo. "manual" (default) no toca nada — los
+        # campos sueltos mandan, igual que siempre.
+        description: "Paquete completo de formato (ver formatos_canal.py). 'manual' deja mandar a motor_broll/motor_tts de abajo"
+        required: false
+        default: "manual"
+        type: choice
+        options: ["manual", "psicologia", "emocional"]
       motor_broll:
         # Por defecto va el motor gratuito, que es el que usa el canal. Con "veo"
         # de default, una corrida disparada sin tocar este campo (por API, o
@@ -126,6 +136,7 @@ jobs:
         env:
           MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'hyperframes' }}
           MOTOR_TTS: ${{ github.event.inputs.motor_tts || 'edge' }}
+          FORMATO_CANAL: ${{ github.event.inputs.formato_canal || 'manual' }}
         run: |
           python -c "
           import json, os
@@ -133,6 +144,11 @@ jobs:
               cfg = json.load(f)
           cfg['motor_broll'] = os.environ['MOTOR_BROLL']
           cfg['motor_tts'] = os.environ['MOTOR_TTS']
+          # Si formato_canal es un preset con nombre, sus valores pisan a los
+          # de arriba (ver formatos_canal.py): es la forma de elegir b-roll +
+          # TTS + carpeta de salida de una sola vez en vez de acordarse de
+          # cada campo suelto. 'manual' no toca nada.
+          cfg['formato_canal'] = os.environ['FORMATO_CANAL']
           with open('config.json', 'w') as f:
               json.dump(cfg, f, ensure_ascii=False, indent=2)
           "
