@@ -30,6 +30,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formato_video
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
@@ -95,6 +96,19 @@ def guardar_json(ruta, data):
 # ---------------------------------------------------------
 # FASE 1: chequeo técnico
 # ---------------------------------------------------------
+def duracion_video(ruta_video):
+    """Duración real del archivo en segundos, o None si no se pudo medir."""
+    try:
+        res = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "json", ruta_video],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(json.loads(res.stdout)["format"]["duration"])
+    except Exception:
+        return None
+
+
 def chequeo_tecnico(ruta_video, cfg):
     if not os.path.isfile(ruta_video) or os.path.getsize(ruta_video) == 0:
         return False, "Archivo de video inexistente o vacío."
@@ -110,8 +124,11 @@ def chequeo_tecnico(ruta_video, cfg):
         return False, f"ffprobe falló: {exc}"
 
     duracion = float(data.get("format", {}).get("duration", 0))
-    if not (cfg["duracion_min_video_seg"] <= duracion <= cfg["duracion_max_video_seg"]):
-        return False, f"Duración fuera de rango: {duracion:.1f}s"
+    # Los límites salen del formato: revisar contra la ventana del formato
+    # anterior rechazaría todos los shorts por "cortos" (ver formato_video.py).
+    dur_min, dur_max = formato_video.limites_duracion(cfg)
+    if not (dur_min <= duracion <= dur_max):
+        return False, f"Duración fuera de rango: {duracion:.1f}s (esperado {dur_min}-{dur_max}s)"
 
     tipos_stream = {s.get("codec_type") for s in data.get("streams", [])}
     if "audio" not in tipos_stream:
@@ -189,7 +206,7 @@ def obtener_servicio_youtube():
     return build("youtube", "v3", credentials=creds)
 
 
-def construir_descripcion(metadata, video, cfg=None):
+def construir_descripcion(metadata, video, cfg=None, duracion_seg=None):
     """Arma la descripción final: lo que genera el modelo + la línea de
     transparencia sobre contenido generado con IA (fija, no depende de que
     el modelo la recuerde) + atribución de música si corresponde."""
@@ -212,7 +229,12 @@ def construir_descripcion(metadata, video, cfg=None):
     hashtags = list(metadata["hashtags"])
     # YouTube clasifica un video como Short por su formato y duración, pero el
     # hashtag ayuda a que lo agrupe bien y es lo que se acostumbra en el nicho.
-    if (cfg or {}).get("formato") == "short" and not any(h.lower() == "shorts" for h in hashtags):
+    # Manda la duración MEDIDA del archivo, no lo que diga config.json: un video
+    # que apuntaba a 60s y salió de 200 no es un short, y etiquetarlo como tal
+    # solo consigue que YouTube lo muestre donde no corresponde.
+    es_short = (formato_video.es_short_medido(duracion_seg, cfg)
+                if duracion_seg else formato_video.es_short(cfg))
+    if es_short and not any(h.lower() == "shorts" for h in hashtags):
         hashtags.insert(0, "Shorts")
     partes.append(" ".join(f"#{h}" for h in hashtags))
     return "\n\n".join(partes)
@@ -222,7 +244,7 @@ def subir_video(servicio, ruta_video, metadata, video, cfg, publish_at_iso):
     body = {
         "snippet": {
             "title": metadata["titulo_youtube"][:100],
-            "description": construir_descripcion(metadata, video, cfg),
+            "description": construir_descripcion(metadata, video, cfg, duracion_video(ruta_video)),
             "tags": metadata["hashtags"],
             "categoryId": cfg["categoria_youtube"],
         },

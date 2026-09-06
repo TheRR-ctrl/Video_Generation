@@ -22,6 +22,7 @@ import json
 import logging
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formato_video
 
 from google import genai
 from google.genai import types as genai_types
@@ -173,7 +174,7 @@ def construir_bloque_referencia(referencias):
 
 
 def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a_generar):
-    formato = cfg.get("formato", "largo")
+    formato = formato_video.formato_de(cfg)
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
     prompt = (
         f"{construir_bloque_referencia(referencias)}\n\n"

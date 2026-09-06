@@ -18,6 +18,7 @@ import json
 import logging
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formato_video
 
 from google import genai
 from google.genai import types as genai_types
@@ -368,7 +369,7 @@ def main():
         try:
             guion = escribir_guion_dia(
                 client, cfg["modelo_texto"], dia,
-                cfg.get("motor_broll", "veo"), cfg.get("formato", "largo"),
+                cfg.get("motor_broll", "veo"), formato_video.formato_de(cfg),
             )
             if not guion.get("escenas"):
                 logger.warning(f"Día {dia['dia']}: el modelo no devolvió escenas, se omite.")

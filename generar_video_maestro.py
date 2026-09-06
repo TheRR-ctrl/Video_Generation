@@ -33,6 +33,7 @@ import veo_broll
 import manim_broll
 import hyperframes_broll
 import hyperframes_audio_mix
+import formato_video
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -740,7 +741,10 @@ def renderizar_una_historia(bloque, cfg, num=1):
 
         print(f"\n🎬 [Día {info['dia']}] {info['hook']}  ({len(info['escenas'])} escena(s))")
 
-        w, h = RESOLUCIONES.get(cfg["aspecto_video"], RESOLUCIONES["16:9"])
+        # La perspectiva sale del formato, no de un ajuste aparte que puede
+        # haber quedado del formato anterior (ver formato_video.py).
+        aspecto = formato_video.aspecto_de(cfg)
+        w, h = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
         configurar_ancho_subtitulos(w, h)
         motor_tts = cfg.get("motor_tts", "gemini")
         es_fem = cfg.get("genero_narrador") == "femenino"
@@ -769,7 +773,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
             prompts_visuales = [p for e in info["escenas"] for p in e["planos"]]
             print(f" ├─ 🎞️ Generando {len(prompts_visuales)} plano(s) de apoyo en lotes (hyperframes)...")
             rutas_broll_lote = hyperframes_broll.generar_clips_lote_cacheados(
-                prompts_visuales, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"],
+                prompts_visuales, aspecto=aspecto, modelo=cfg["modelo_texto"],
                 tam_lote=cfg.get("tam_lote_hyperframes", hyperframes_broll.TAM_LOTE_DEFAULT),
                 # Cuántos planos trae cada escena: los de una misma escena se
                 # piden juntos y con continuidad (misma maqueta, misma paleta,
@@ -808,7 +812,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
             if motor == "manim":
                 clips_base = [
                     manim_broll.generar_clip_cacheado(
-                        plano, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
+                        plano, aspecto=aspecto, modelo=cfg["modelo_texto"]
                     )
                     for plano in escena["planos"]
                 ]
@@ -817,7 +821,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
             else:
                 clips_base = [
                     veo_broll.generar_clip_cacheado(
-                        plano, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
+                        plano, aspecto=aspecto, modelo=cfg["modelo_veo"]
                     )
                     for plano in escena["planos"]
                 ]
@@ -911,7 +915,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
 
         f_ass = ass_karaoke.replace('\\', '\\\\').replace(':', '\\:')
         dur_tarjeta = (
-            DURACION_INTRO_CARD_SHORT_SEG if cfg.get("formato") == "short"
+            DURACION_INTRO_CARD_SHORT_SEG if formato_video.es_short(cfg)
             else DURACION_INTRO_CARD_SEG
         )
         # Con la tarjeta en 0 se saca el overlay del filtro entero: dejarlo con
