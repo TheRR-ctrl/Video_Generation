@@ -51,11 +51,11 @@ on:
         # de default, una corrida disparada sin tocar este campo (por API, o
         # dándole a Run workflow de una) se va a Veo y quema la cuota diaria sin
         # ejecutar nada de HyperFrames: pasó en la corrida 34003101637.
-        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; veo = IA generativa, con cuota)"
+        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; fotos = banco Pexels con Ken Burns, gratis; veo = IA generativa, con cuota)"
         required: false
         default: "hyperframes"
         type: choice
-        options: ["hyperframes", "manim", "veo"]
+        options: ["hyperframes", "manim", "fotos", "veo"]
       motor_tts:
         description: "Motor de narración (edge = gratis sin límite; gemini = tope de 10 solicitudes/día)"
         required: false
