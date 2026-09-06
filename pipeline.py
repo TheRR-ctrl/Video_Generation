@@ -28,6 +28,7 @@ import logging
 import traceback
 
 import env_local  # noqa: F401 (carga .env si existe, antes de cualquier otro import)
+import presupuesto
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("pipeline")
@@ -87,6 +88,14 @@ def main():
     if i_desde > i_hasta:
         parser.error("--desde no puede ir después de --hasta")
 
+    # Topes de gasto ANTES de cualquier etapa: si no se configura, rigen los
+    # valores por defecto, que son los más restrictivos (video en cero).
+    import publisher
+    cfg_gasto = publisher.cargar_config()
+    topes = presupuesto.configurar(cfg_gasto)
+    logger.info(f"Topes de gasto por día: {topes} (modo_pruebas={cfg_gasto.get('modo_pruebas', True)})")
+    logger.info(presupuesto.resumen_texto())
+
     resultados = {}
 
     frena_generacion = False
@@ -120,6 +129,9 @@ def main():
     logger.info("===== Resumen =====")
     for nombre, ok in resultados.items():
         logger.info(f"  {'✅' if ok else '❌'} {nombre}")
+    # Se imprime siempre, hayan fallado etapas o no: en pruebas lo que importa es
+    # saber cuánto se consumió, sobre todo cuando la corrida se cayó a la mitad.
+    logger.info(f"  💰 {presupuesto.resumen_texto()}")
 
     if not all(resultados.values()):
         sys.exit(1)

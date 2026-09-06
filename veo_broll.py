@@ -19,6 +19,8 @@ import logging
 from google import genai
 from google.genai import types as genai_types
 
+import presupuesto
+
 MODELO_DEFAULT = "veo-3.0-generate-001"
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "veo_cache")
@@ -112,6 +114,9 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_DEFAULT, 
     # nada y tiene que seguir sirviendo aunque el permiso no esté puesto. Lo que
     # se bloquea es generar uno nuevo, que es lo que cobra.
     _verificar_permiso()
+    # Segundo cerrojo, independiente del permiso: aunque alguien exporte
+    # PERMITIR_VEO=1, el tope diario sigue rigiendo y en modo_pruebas es cero.
+    presupuesto.consumir("video", 1, modelo)
 
     cliente = _obtener_cliente()
     for intento in range(1, reintentos + 1):

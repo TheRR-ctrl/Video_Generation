@@ -23,6 +23,8 @@ import logging
 
 from google.genai import errors as genai_errors
 
+import presupuesto
+
 logger = logging.getLogger("gemini_utils")
 
 _RE_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
@@ -55,6 +57,11 @@ def llamar_con_reintentos(fn, *args, reintentos=6, espera_base_seg=20.0, **kwarg
     backoff exponencial espera hasta ~10 minutos antes de rendirse, que es
     tiempo de runner desatendido y no de nadie mirando la pantalla."""
     for intento in range(1, reintentos + 1):
+        # Se anota ANTES de llamar, y una vez por intento. Un 429 o un 503 no
+        # cobran, así que contarlos sobra por unos pocos; a cambio, un bucle de
+        # reintentos desbocado choca contra el tope en vez de seguir pidiendo.
+        # Ese es justo el caso que hay que frenar (ver presupuesto.py).
+        presupuesto.consumir("texto", 1, kwargs.get("model") or "texto")
         try:
             return fn(*args, **kwargs)
         except genai_errors.APIError as exc:
