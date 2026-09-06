@@ -72,9 +72,15 @@ def construir_schema_plan(formato):
     )
     desc_titulo = (
         "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
-        "no el título de un ensayo: tiene que generar tensión en el primer vistazo."
+        "no el título de un ensayo: tiene que abrir un hueco de curiosidad sobre algo que "
+        "el espectador ya vivió. Preferí la pregunta directa en segunda persona "
+        "(\"¿Por qué te acordás de lo que dijiste hace diez años?\"); una afirmación solo "
+        "si es una paradoja que se contradice sola (\"Intentar dormir es lo que te mantiene "
+        "despierto\"). Nunca un tema enunciado (\"La importancia del descanso\")."
         if es_short else
-        "Título/hook para YouTube, genera curiosidad, sin clickbait engañoso."
+        "Título/hook para YouTube: pregunta abierta sobre algo cotidiano que el espectador "
+        "nunca se detuvo a preguntarse (\"¿Qué hacían nuestros antepasados todo el día?\"). "
+        "Genera curiosidad, sin clickbait engañoso."
     )
     desc_resumen = (
         "2-3 frases con el arco del short: el hook que abre, la idea que lo explica y el "
@@ -117,6 +123,17 @@ nicho, únicamente como referencia de tono y ángulo. Reglas estrictas:
   con otras palabras).
 - Los títulos deben generar curiosidad genuina, sin prometer algo que el video no
   vaya a cumplir (nada de clickbait engañoso).
+- La forma que mejor funciona en este nicho es la PREGUNTA ABIERTA sobre algo
+  cotidiano que el espectador vivió mil veces y nunca se detuvo a preguntarse.
+  El canal de referencia llegó a 160.000 suscriptores con 21 videos usando
+  exactamente eso: "¿Qué hacían nuestros antepasados todo el día?", "¿Qué
+  soñaban los primeros humanos?". Funciona porque el espectador no puede
+  contestarla solo, y esa es la razón por la que se queda.
+  Lo que NO funciona es el tema enunciado ("La psicología del descanso", "Cómo
+  mejorar tu concentración"): no abre ningún hueco, informa que el video existe.
+  La única afirmación que compite con una pregunta es la paradoja que se
+  contradice sola ("Intentar dormir es lo que te mantiene despierto"), porque el
+  hueco lo abre igual. Si tu título no es ninguna de las dos, reescribilo.
 - Evita cualquier consejo que se preste a diagnóstico clínico; es contenido de
   divulgación/autoayuda, no terapia."""
 
