@@ -60,6 +60,11 @@ REJILLA = "rgba(255,255,255,0.05)"
 TIPOGRAFIA = ("system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', "
               "Arial, sans-serif")
 
+# Segundo en que entra el acento del plano (el pulso sobre el elemento en foco).
+# Va después de que el diagrama está completo, para no pelearse con el armado
+# ni romper la regla de que a partir del 40% nada aparece ni desaparece.
+_SEG_ACENTO = 2.6
+
 ARQUETIPOS = ("comparacion", "proporcion", "evolucion", "proceso", "estructura", "metafora")
 
 _RE_ARQUETIPO = re.compile(r"\[([a-záéíóúñ]+)\]", re.I)
@@ -134,6 +139,32 @@ def _valores(plano, cantidad):
         return datos, bool(plano["datos"])
     # Progresión suave: el último elemento es el que la escena destaca.
     return [1.0 + i * 0.9 for i in range(cantidad)], False
+
+
+def _foco(plano, cantidad):
+    """Índice del elemento que este plano destaca: el último que revela.
+
+    Sin esto los planos de una escena salían casi idénticos —la maqueta es la
+    misma y solo cambiaba un elemento tenue— y la imagen se sentía repetida
+    mientras la voz seguía hablando. Con un foco que se mueve, el plano 2 no es
+    "el 1 con algo más": es el mismo dibujo mirando otra parte. Es lo que hace
+    un explicador de verdad, y es lo contrario de cambiar de dibujo."""
+    return max(0, _reveladas(plano, cantidad) - 1)
+
+
+def _enfasis(indice, plano, cantidad):
+    """(opacidad, escala) de cada elemento según dónde esté el foco.
+
+    - Antes del foco: ya se dijo, se atenúa y encoge un punto.
+    - En el foco: a plena luz y tamaño completo.
+    - Después del foco: todavía no se dijo, queda como hueco marcado."""
+    visibles = _reveladas(plano, cantidad)
+    foco = _foco(plano, cantidad)
+    if indice > visibles - 1:
+        return 0.16, 0.96
+    if indice == foco:
+        return 1.0, 1.0
+    return 0.5, 0.95
 
 
 def _reveladas(plano, cantidad):
@@ -265,18 +296,28 @@ def _comparacion(plano, ancho, alto_libre, duracion):
             f'style="position:absolute;left:{x}px;top:{zona_top + zona_alto + int(ancho*0.022)}px;'
             f'width:{barra_ancho}px;text-align:center;line-height:1.2;opacity:0">{_esc(etq)}</div>'
         )
+        op, esc = _enfasis(i, plano, n)
         if aparece:
             t = 0.25 + i * 0.35
             tweens.append(
                 f'tl.fromTo("#barra{i}", {{ scaleY: 0, opacity: 1 }}, '
-                f'{{ scaleY: 1, opacity: 1, duration: 0.55, ease: "power2.out" }}, {t:.2f});'
+                f'{{ scaleY: {esc}, opacity: {op}, duration: 0.55, ease: "power2.out" }}, {t:.2f});'
             )
             tweens.append(
-                f'tl.fromTo("#rot{i}", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.3 }}, {t + 0.25:.2f});'
+                f'tl.fromTo("#rot{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.25:.2f});'
             )
             if cifra:
                 tweens.append(
-                    f'tl.fromTo("#cifra{i}", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.3 }}, {t + 0.4:.2f});'
+                    f'tl.fromTo("#cifra{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.4:.2f});'
+                )
+            if i == _foco(plano, n):
+                # El acento del plano: un pulso sostenido sobre lo que este
+                # plano viene a decir. Va después de que el diagrama ya está
+                # armado, así que no rompe la regla de "nada desaparece".
+                tweens.append(
+                    f'tl.fromTo("#barra{i}", {{ filter: "brightness(1)" }}, '
+                    f'{{ filter: "brightness(1.35)", duration: 0.9, ease: "sine.inOut", '
+                    f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
                 )
         else:
             # Las piezas que este plano todavía no revela quedan como hueco
@@ -387,9 +428,15 @@ def _evolucion(plano, ancho, alto_libre, duracion):
             f'{_esc(etiquetas[i]) if i < len(etiquetas) else ""}</div>'
         )
         t = 0.35 + i * (1.2 / n)
-        op_pt, op_etq = (1, 1) if vis else (0.18, 0.25)
-        tweens.append(f'tl.fromTo("#pt{i}", {{ opacity: 0 }}, {{ opacity: {op_pt}, duration: 0.3 }}, {t:.2f});')
-        tweens.append(f'tl.fromTo("#etq{i}", {{ opacity: 0 }}, {{ opacity: {op_etq}, duration: 0.3 }}, {t + 0.1:.2f});')
+        op, esc = _enfasis(i, plano, n)
+        tweens.append(f'tl.fromTo("#pt{i}", {{ opacity: 0, scale: 0.6 }}, {{ opacity: {op}, scale: {1.35 if vis and i == _foco(plano, n) else esc}, duration: 0.3 }}, {t:.2f});')
+        tweens.append(f'tl.fromTo("#etq{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.1:.2f});')
+        if vis and i == _foco(plano, n):
+            tweens.append(
+                f'tl.fromTo("#pt{i}", {{ filter: "brightness(1)" }}, '
+                f'{{ filter: "brightness(1.5)", duration: 0.9, ease: "sine.inOut", '
+                f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
+            )
     return piezas, tweens
 
 
@@ -432,11 +479,18 @@ def _proceso(plano, ancho, alto_libre, duracion):
                 f'<polygon points="{ancho//2 - 11},{fy + hueco - 16} {ancho//2 + 11},{fy + hueco - 16} '
                 f'{ancho//2},{fy + hueco - 2}" fill="{TENUE}"/></svg>'
             )
+        op, esc = _enfasis(i, plano, n)
         t = 0.3 + i * 0.45
         tweens.append(
             f'tl.fromTo("#caja{i}", {{ opacity: 0, scale: 0.9 }}, '
-            f'{{ opacity: {1 if vis else 0.2}, scale: 1, duration: 0.45, ease: "back.out(1.6)" }}, {t:.2f});'
+            f'{{ opacity: {op}, scale: {esc}, duration: 0.45, ease: "back.out(1.6)" }}, {t:.2f});'
         )
+        if vis and i == _foco(plano, n):
+            tweens.append(
+                f'tl.fromTo("#caja{i}", {{ filter: "brightness(1)" }}, '
+                f'{{ filter: "brightness(1.4)", duration: 0.9, ease: "sine.inOut", '
+                f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
+            )
         if i < n - 1:
             tweens.append(
                 f'tl.fromTo("#flecha{i}", {{ opacity: 0 }}, '
@@ -493,10 +547,17 @@ def _estructura(plano, ancho, alto_libre, duracion):
         )
         t = 0.7 + i * 0.35
         tweens.append(f'tl.fromTo("#rama{i}", {{ opacity: 0 }}, {{ opacity: {0.9 if vis else 0.15}, duration: 0.35 }}, {t:.2f});')
+        op, esc = _enfasis(i, plano, n)
         tweens.append(
             f'tl.fromTo("#parte{i}", {{ opacity: 0, y: 22 }}, '
-            f'{{ opacity: {1 if vis else 0.2}, y: 0, duration: 0.4, ease: "power2.out" }}, {t + 0.15:.2f});'
+            f'{{ opacity: {op}, y: 0, scale: {esc}, duration: 0.4, ease: "power2.out" }}, {t + 0.15:.2f});'
         )
+        if vis and i == _foco(plano, n):
+            tweens.append(
+                f'tl.fromTo("#parte{i}", {{ filter: "brightness(1)" }}, '
+                f'{{ filter: "brightness(1.4)", duration: 0.9, ease: "sine.inOut", '
+                f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
+            )
     return piezas, tweens
 
 
@@ -540,12 +601,19 @@ def _metafora(plano, ancho, alto_libre, duracion):
                 f'<polygon points="{fx + hueco - 20},{cy - 11} {fx + hueco - 20},{cy + 11} '
                 f'{fx + hueco - 4},{cy}" fill="{TENUE}"/></svg>'
             )
+        op, esc = _enfasis(i, plano, n)
         t = 0.3 + i * 0.45
         tweens.append(
             f'tl.fromTo("#fig{i}", {{ opacity: 0, scale: 0.8 }}, '
-            f'{{ opacity: {1 if vis else 0.2}, scale: 1, duration: 0.5, ease: "back.out(1.5)" }}, {t:.2f});'
+            f'{{ opacity: {op}, scale: {esc}, duration: 0.5, ease: "back.out(1.5)" }}, {t:.2f});'
         )
-        tweens.append(f'tl.fromTo("#figrot{i}", {{ opacity: 0 }}, {{ opacity: {1 if vis else 0.25}, duration: 0.3 }}, {t + 0.25:.2f});')
+        tweens.append(f'tl.fromTo("#figrot{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.25:.2f});')
+        if vis and i == _foco(plano, n):
+            tweens.append(
+                f'tl.fromTo("#fig{i}", {{ filter: "brightness(1)" }}, '
+                f'{{ filter: "brightness(1.4)", duration: 0.9, ease: "sine.inOut", '
+                f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
+            )
         if i < n - 1:
             tweens.append(f'tl.fromTo("#rel{i}", {{ opacity: 0 }}, {{ opacity: {1 if i < visibles - 1 else 0.2}, duration: 0.3 }}, {t + 0.35:.2f});')
     return piezas, tweens
