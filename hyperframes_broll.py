@@ -145,6 +145,14 @@ Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
     * `repeat: -1` en GSAP y `animation: ... infinite` en CSS.
   Toda la animación va en la timeline pausada, que es lo único que el
   compositor sabe recorrer.
+- NUNCA pongas en el CSS de un elemento un `transform` (scale, translate,
+  rotate) si después GSAP le anima alguna de esas propiedades: GSAP reescribe
+  el transform entero y se lleva puesto lo que había en el CSS — un
+  `translateX(-50%)` de centrado desaparece y el elemento salta de lugar. El
+  valor inicial va en el `fromTo` de GSAP, no en el CSS. En vez de
+  `.caja {{ transform: scale(0.8); }}` + `tl.to('.caja', {{ scale: 1 }})`, escribí
+  `tl.fromTo('.caja', {{ scale: 0.8 }}, {{ scale: 1 }})`. Para centrar sin
+  transform, usá flex o `inset:0; margin:auto`.
 
 Reglas de composición (el clip NO se ve solo: encima lleva narración y
 subtítulos quemados, así que romperlas arruina el video aunque el render
@@ -407,6 +415,19 @@ def _entorno_cli():
     return env
 
 
+def _hallazgo_del_modelo(hallazgo, directorio):
+    """¿El hallazgo del linter es sobre el HTML que escribió Gemini?
+
+    Todo lo que no sea el index.html del directorio (o sea: las
+    sub-composiciones que ponemos nosotros) es nuestro y el modelo no puede
+    arreglarlo; pasárselo como corrección solo ensucia el reintento. Sin
+    ruta en el hallazgo se asume que sí, para no tragarse errores reales."""
+    ruta = hallazgo.get("file") or hallazgo.get("filePath")
+    if not ruta:
+        return True
+    return os.path.basename(ruta) == "index.html"
+
+
 def _lint(directorio):
     """Errores que reporta el linter del CLI, o None si la composición está
     limpia.
@@ -416,7 +437,18 @@ def _lint(directorio):
     tarda ~1s, contra los 20-30s de un render: atrapa los incumplimientos del
     contrato (timeline sin registrar, CDN externo, data-duration fuera de rango)
     antes de pagar un render que iba a fallar igual. Y devuelve un `fixHint` por
-    error, que es lo que se le pasa al modelo en el reintento."""
+    error, que es lo que se le pasa al modelo en el reintento.
+
+    Solo cuentan los hallazgos del index.html, que es lo único que escribió
+    Gemini. El linter recorre el directorio entero, y ahí adentro también está
+    nuestro `compositions/chart-story.html` vendorizado, que a propósito no
+    declara data-width/data-height —llena la caja que le da el anfitrión, lo
+    documenta su propio encabezado— y por eso siempre reporta
+    root_missing_dimensions. Con ese error contando como propio, TODA
+    composición quedaba rechazada por algo que Gemini no escribió y no podía
+    arreglar: la corrida 33995064364 se quedó sin un solo clip, con ese hallazgo
+    repetido en cada intento. Medido: lint sobre index.html solo = 0 errores;
+    el mismo index.html con chart-story al lado = 1 error, el de chart-story."""
     try:
         res = subprocess.run(
             ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "lint", directorio, "--json"],
@@ -437,6 +469,8 @@ def _lint(directorio):
     errores = []
     for hallazgo in datos.get("findings", []):
         if hallazgo.get("severity") != "error":
+            continue
+        if not _hallazgo_del_modelo(hallazgo, directorio):
             continue
         linea = f"- {hallazgo.get('code', 'error')}: {hallazgo.get('message', '')}"
         if hallazgo.get("fixHint"):
