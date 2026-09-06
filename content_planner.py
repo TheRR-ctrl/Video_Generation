@@ -65,26 +65,38 @@ GUIA_LARGO = """
 Este canal publica videos largos horizontales de 6 a 15 minutos, con espacio
 para desarrollar varias ideas y ejemplos."""
 
-def construir_schema_plan(formato):
+def construir_schema_plan(formato, formato_canal="manual"):
     es_short = formato == FORMATO_SHORT
+    es_emocional = formato_canal == "emocional"
     desc_duracion = (
         "Duración objetivo en minutos. Es un short: entre 0.5 y 1 (o sea 30 a 60 segundos)."
         if es_short else
         "Duración objetivo del video en minutos (entre 6 y 15)."
     )
-    desc_titulo = (
-        "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
-        "no el título de un ensayo: tiene que abrir un hueco de curiosidad sobre algo que "
-        "el espectador ya vivió. Preferí la pregunta directa en segunda persona "
-        "(\"¿Por qué te acordás de lo que dijiste hace diez años?\"); una afirmación solo "
-        "si es una paradoja que se contradice sola (\"Intentar dormir es lo que te mantiene "
-        "despierto\"). Nunca un tema enunciado (\"La importancia del descanso\")."
-        if es_short else
-        "Título/hook para YouTube: pregunta abierta sobre algo cotidiano que el espectador "
-        "nunca se detuvo a preguntarse (\"¿Qué hacían nuestros antepasados todo el día?\"). "
-        "Genera curiosidad, sin clickbait engañoso."
-    )
+    if es_emocional:
+        desc_titulo = (
+            "Frase evocadora de menos de 60 caracteres, tipo verso o línea de carta, que "
+            "sitúe un estado de ánimo o una imagen concreta (\"A veces el silencio también "
+            "es una forma de compañía\"). NO es una pregunta de curiosidad ni un dato: es la "
+            "primera línea de una reflexión, no el gancho de un explicador."
+        )
+    else:
+        desc_titulo = (
+            "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
+            "no el título de un ensayo: tiene que abrir un hueco de curiosidad sobre algo que "
+            "el espectador ya vivió. Preferí la pregunta directa en segunda persona "
+            "(\"¿Por qué te acordás de lo que dijiste hace diez años?\"); una afirmación solo "
+            "si es una paradoja que se contradice sola (\"Intentar dormir es lo que te mantiene "
+            "despierto\"). Nunca un tema enunciado (\"La importancia del descanso\")."
+            if es_short else
+            "Título/hook para YouTube: pregunta abierta sobre algo cotidiano que el espectador "
+            "nunca se detuvo a preguntarse (\"¿Qué hacían nuestros antepasados todo el día?\"). "
+            "Genera curiosidad, sin clickbait engañoso."
+        )
     desc_resumen = (
+        "2-3 frases con el arco de la reflexión: la imagen que abre, el sentimiento que "
+        "desarrolla y la idea en la que decanta. Sin moraleja ni consejo."
+        if es_emocional and es_short else
         "2-3 frases con el arco del short: el hook que abre, la idea que lo explica y el "
         "remate. Una sola idea de punta a punta."
         if es_short else
@@ -139,6 +151,21 @@ nicho, únicamente como referencia de tono y ángulo. Reglas estrictas:
 - Evita cualquier consejo que se preste a diagnóstico clínico; es contenido de
   divulgación/autoayuda, no terapia."""
 
+SYSTEM_PROMPT_EMOCIONAL = """Eres estratega de contenido para un canal de YouTube en español
+de reflexiones breves tipo carta/poesía sobre fotografías reales evocadoras. El canal es
+"sin rostro": no hay presentador en cámara, solo narración en off pausada e íntima.
+
+Reglas:
+- Cada día del plan es una reflexión distinta (soledad, calma, nostalgia, compañía,
+  el paso del tiempo, la rutina) — no repitas el mismo sentimiento con otras palabras.
+- Nada de ángulo psicológico, consejo de autoayuda ni dato curioso: esto no explica
+  nada, evoca un estado de ánimo a partir de una imagen o situación cotidiana concreta
+  (una ventana con lluvia, una taza de té sola, un atardecer).
+- El título/hook NUNCA es una pregunta de curiosidad ni un tema enunciado: es una
+  frase evocadora, la primera línea de la reflexión en sí misma.
+- Evita cualquier consejo prescriptivo ("deberías", "la clave es"): es contemplación,
+  no divulgación."""
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("content_planner")
 
@@ -176,24 +203,30 @@ def construir_bloque_referencia(referencias):
 
 def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a_generar):
     formato = formato_video.formato_de(cfg)
+    formato_canal = cfg.get("formato_canal", "manual")
+    es_emocional = formato_canal == "emocional"
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
+    # Las referencias son canales de psicología/divulgación: mezclarlas en el prompt del
+    # formato emocional contaminaría el tono (contenido de reflexión no explica ni divulga).
+    bloque_referencia = "" if es_emocional else f"{construir_bloque_referencia(referencias)}\n\n"
     prompt = (
-        f"{construir_bloque_referencia(referencias)}\n\n"
+        f"{bloque_referencia}"
         f"Temas ya usados en este plan (no los repitas ni los parafrasees):\n{temas_existentes}\n\n"
         f"Genera {cantidad_a_generar} día(s) nuevo(s) de plan de contenido, distintos entre sí "
         f"y de los temas ya usados."
     )
 
+    instrucciones_base = SYSTEM_PROMPT_EMOCIONAL if es_emocional else SYSTEM_PROMPT
     response = llamar_con_reintentos(
         client.models.generate_content,
         model=cfg["modelo_texto"],
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT + (
+            system_instruction=instrucciones_base + (
                 GUIA_SHORT if formato == FORMATO_SHORT else GUIA_LARGO
             ),
             response_mime_type="application/json",
-            response_schema=construir_schema_plan(formato),
+            response_schema=construir_schema_plan(formato, formato_canal),
         ),
     )
     data = json.loads(response.text)

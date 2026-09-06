@@ -73,6 +73,15 @@ DESC_VISUAL_FILMABLE = (
     "Descripción en inglés, concreta y filmable, para generar con IA un clip de video "
     "que ilustre esta escena. Sin texto en pantalla, sin rostros reconocibles, sin marcas/logos."
 )
+# Para el motor "fotos" (banco de Pexels, ver fondos_stock.py): la búsqueda funciona
+# mejor con 2-4 palabras concretas (objeto + luz/clima) que con una oración cinematográfica
+# tipo Veo — una consulta larga le devuelve resultados genéricos o vacíos.
+DESC_VISUAL_FOTOS = (
+    "2 a 4 palabras concretas EN ESPAÑOL para buscar una foto de banco (no una oración "
+    "filmada, no un plano de cámara): un objeto o escena cotidiana + la luz o el clima que "
+    "acompaña el tono de la narración, como 'ventana lluvia silencio' o 'taza de te mesa "
+    "madera'. Sin personas identificables, sin texto ni marcas."
+)
 DESC_VISUAL_MOTION = (
     "Descripción EN ESPAÑOL del DIAGRAMA a dibujar (no de una toma filmada, no de una "
     "metáfora poética). Decí qué elementos concretos aparecen y qué relación muestran "
@@ -137,12 +146,18 @@ DESC_PLANOS_VISUAL = (
 )
 
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
+MOTOR_FOTOS = "fotos"
 
 
 def construir_schema_guion(motor_broll, formato="largo"):
     es_motion = motor_broll in MOTORES_MOTION_GRAPHICS
     es_short = formato == FORMATO_SHORT
-    descripcion_visual = DESC_VISUAL_MOTION if es_motion else DESC_VISUAL_FILMABLE
+    if es_motion:
+        descripcion_visual = DESC_VISUAL_MOTION
+    elif motor_broll == MOTOR_FOTOS:
+        descripcion_visual = DESC_VISUAL_FOTOS
+    else:
+        descripcion_visual = DESC_VISUAL_FILMABLE
     propiedades = {
         "texto": {
             "type": "string",
@@ -228,6 +243,32 @@ Reglas:
   instrucciones estén escritas en otro registro no cambia el del guion.
 - No incluyas markdown ni encabezados en el texto narrado."""
 
+SYSTEM_PROMPT_EMOCIONAL = """Eres guionista de un canal de YouTube en español de
+reflexiones breves tipo carta/poesía, formato narrado (voz en off, calmada, íntima),
+sobre fotografías reales evocadoras (no diagramas, no consejos prácticos).
+
+Reglas:
+- Divide el guion en escenas de 15-25 segundos de narración cada una (~40-70
+  palabras por escena). Genera las escenas necesarias para cubrir la duración
+  objetivo a un ritmo de locución pausado, de ~110-120 palabras/minuto en español.
+- La primera escena abre con una imagen o sensación concreta (un lugar, una hora
+  del día, un objeto cotidiano) que sitúe el estado de ánimo, no con una pregunta
+  de curiosidad ni un dato: esto no es un explicador, es una reflexión.
+- Tono íntimo, contemplativo, en segunda persona o impersonal ("hay noches en las
+  que..."), sin diagnosticar ni dar consejos de autoayuda ("deberías", "la clave
+  es"). Nada de conceptos psicológicos técnicos ni estudios: es prosa poética
+  breve, no divulgación.
+- Cierra con una idea que decante la reflexión (no una moraleja ni un consejo) y,
+  enganchada a ESE cierre, una invitación suave a comentar, dar like y suscribirse
+  que retome la imagen o el sentimiento central del video — nunca una frase
+  genérica de relleno. Cada guion necesita su propio cierre, distinto al de los
+  demás.
+- Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): debe sonar
+  como alguien pensando en voz alta, no leyendo un ensayo.
+- Español neutro latinoamericano, tratando al espectador de TÚ cuando corresponda.
+  Nada de voseo ("cerrás", "tenés") ni de "vosotros".
+- No incluyas markdown ni encabezados en el texto narrado."""
+
 GUIA_VISUAL_MOTION = """
 
 El video de apoyo NO se filma: se dibuja con código (motion graphics sobre fondo
@@ -273,7 +314,7 @@ def dias_ya_guionados():
     return {int(n) for n in re.findall(r"^# Dia:\s*(\d+)", contenido, re.MULTILINE)}
 
 
-def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo"):
+def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo", formato_canal="manual"):
     prompt = (
         f"Tema: {dia['tema']}\n"
         f"Título/hook: {dia['titulo_hook']}\n"
@@ -283,7 +324,7 @@ def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo"):
         f"Duración objetivo: {dia['duracion_objetivo_min']} minutos"
     )
 
-    instrucciones = SYSTEM_PROMPT
+    instrucciones = SYSTEM_PROMPT_EMOCIONAL if formato_canal == "emocional" else SYSTEM_PROMPT
     if formato == FORMATO_SHORT:
         instrucciones += GUIA_SHORT
     if motor_broll in MOTORES_MOTION_GRAPHICS:
@@ -381,6 +422,7 @@ def main():
             guion = escribir_guion_dia(
                 client, cfg["modelo_texto"], dia,
                 cfg.get("motor_broll", "veo"), formato_video.formato_de(cfg),
+                cfg.get("formato_canal", "manual"),
             )
             if not guion.get("escenas"):
                 logger.warning(f"Día {dia['dia']}: el modelo no devolvió escenas, se omite.")
