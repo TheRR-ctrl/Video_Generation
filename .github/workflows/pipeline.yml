@@ -29,17 +29,21 @@ on:
         type: choice
         options: ["plan", "guion", "video", "publicar"]
       motor_broll:
-        description: "Motor de video de apoyo (veo = IA generativa de pago; manim/hyperframes = animación por código, gratis)"
+        # Por defecto va el motor gratuito, que es el que usa el canal. Con "veo"
+        # de default, una corrida disparada sin tocar este campo (por API, o
+        # dándole a Run workflow de una) se va a Veo y quema la cuota diaria sin
+        # ejecutar nada de HyperFrames: pasó en la corrida 34003101637.
+        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; veo = IA generativa, con cuota)"
         required: false
-        default: "veo"
+        default: "hyperframes"
         type: choice
-        options: ["veo", "manim", "hyperframes"]
+        options: ["hyperframes", "manim", "veo"]
       motor_tts:
-        description: "Motor de narración (gemini = tope de 10 solicitudes/día gratis; edge = gratis sin límite)"
+        description: "Motor de narración (edge = gratis sin límite; gemini = tope de 10 solicitudes/día)"
         required: false
-        default: "gemini"
+        default: "edge"
         type: choice
-        options: ["gemini", "edge"]
+        options: ["edge", "gemini"]
       regenerar_guion:
         description: "Descartar el guion, los clips cacheados y los videos ya hechos, y escribir todo de nuevo (necesario al cambiar de motor_broll: los prompts visuales se escriben distinto para cada motor)"
         required: false
@@ -102,8 +106,8 @@ jobs:
 
       - name: Fijar motor de video de apoyo y de narración
         env:
-          MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'veo' }}
-          MOTOR_TTS: ${{ github.event.inputs.motor_tts || 'gemini' }}
+          MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'hyperframes' }}
+          MOTOR_TTS: ${{ github.event.inputs.motor_tts || 'edge' }}
         run: |
           python -c "
           import json, os
