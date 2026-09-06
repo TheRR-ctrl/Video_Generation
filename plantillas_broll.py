@@ -167,6 +167,21 @@ def _enfasis(indice, plano, cantidad):
     return 0.5, 0.95
 
 
+def _revelado_previo(plano, cantidad):
+    """Piezas que ya estaban visibles en el plano ANTERIOR de esta escena.
+
+    Es lo que permite distinguir "elemento nuevo de este plano" (necesita
+    animación de entrada) de "elemento que ya se mostró antes" (tiene que
+    quedar quieto). Sin esto, cada plano volvía a animar TODO lo ya revelado
+    desde cero —incluido el título—, y con 2-3 planos por escena el dibujo se
+    veía reiniciarse 2-3 veces mientras la voz seguía con la misma idea."""
+    if plano["indice"] <= 1:
+        return 0
+    anterior = dict(plano)
+    anterior["indice"] = plano["indice"] - 1
+    return _reveladas(anterior, cantidad)
+
+
 def _reveladas(plano, cantidad):
     """Cuántas piezas se ven en este plano.
 
@@ -185,10 +200,19 @@ def _reveladas(plano, cantidad):
 # cumple el contrato, para que ninguna pueda romperlo por su cuenta.
 # ---------------------------------------------------------------------------
 
-def _documento(piezas, tweens, ancho, alto, alto_libre, duracion, titulo):
+def _documento(piezas, tweens, ancho, alto, alto_libre, duracion, titulo, titulo_nuevo=True):
     cuerpo = "\n      ".join(piezas)
     animacion = "\n  ".join(tweens)
     margen_sup = int(alto_libre * 0.06)
+    # El título es el mismo texto en todos los planos de una escena (sale de
+    # las etiquetas, que no cambian). Si ya voló hacia adentro en un plano
+    # anterior, en los siguientes queda quieto desde el frame 0 en vez de
+    # volver a animarse — es la misma repetición que con los demás elementos.
+    titulo_estilo = "opacity:1" if not titulo_nuevo else "opacity:0"
+    titulo_tween = (
+        'tl.fromTo("#titulo", { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.4 }, 0);'
+        if titulo_nuevo else ""
+    )
     return f"""<!doctype html>
 <html lang="es">
 <head>
@@ -227,14 +251,14 @@ def _documento(piezas, tweens, ancho, alto, alto_libre, duracion, titulo):
 <div id="root"
      data-composition-id="main" data-start="0" data-duration="{duracion}"
      data-width="{ancho}" data-height="{alto}">
-  <div id="titulo" class="clip" data-start="0" data-duration="{duracion}">{_esc(titulo)}</div>
+  <div id="titulo" class="clip" data-start="0" data-duration="{duracion}" style="{titulo_estilo}">{_esc(titulo)}</div>
   <div id="lienzo">
       {cuerpo}
   </div>
 </div>
 <script>
   var tl = gsap.timeline({{ paused: true }});
-  tl.fromTo("#titulo", {{ opacity: 0, y: -18 }}, {{ opacity: 1, y: 0, duration: 0.4 }}, 0);
+  {titulo_tween}
   {animacion}
   window.__timelines = window.__timelines || {{}};
   window.__timelines["main"] = tl;
@@ -271,34 +295,50 @@ def _comparacion(plano, ancho, alto_libre, duracion):
     hueco = int(util * 0.06)
     barra_ancho = (util - hueco * (n - 1)) // n
 
+    previo = _revelado_previo(plano, n)
     piezas, tweens = [], []
     for i, etq in enumerate(etiquetas):
         x = int(ancho * 0.07) + i * (barra_ancho + hueco)
         h = max(28, int(zona_alto * (valores[i] / maximo)))
         color = ACENTOS[i % len(ACENTOS)]
         y = zona_top + zona_alto - h
-        aparece = i < visibles
         cifra = _fmt(valores[i], con_unidad)
+        op, esc = _enfasis(i, plano, n)
+        es_nuevo = previo <= i < visibles
+        ya_estaba = i < previo
+
+        # Solo lo NUEVO de este plano anima su entrada. Lo que ya se mostró en
+        # un plano anterior de la misma escena queda quieto desde el frame 0
+        # —si no, cada plano volvía a hacer crecer TODAS las barras ya
+        # mostradas, y con 2-3 planos por escena el dibujo parecía reiniciarse
+        # otras tantas veces mientras la voz seguía con la misma idea.
+        if ya_estaba:
+            estilo_barra = f"opacity:{op};transform:scaleY({esc})"
+        elif es_nuevo:
+            estilo_barra = "opacity:0"
+        else:
+            estilo_barra = "opacity:0.16;transform:scaleY(0.06)"
         piezas.append(
             f'<div class="clip barra" id="barra{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x}px;top:{y}px;width:{barra_ancho}px;height:{h}px;'
             f'background:linear-gradient(180deg,{color},{color}55);border-radius:{int(barra_ancho*0.12)}px;'
-            f'transform-origin:50% 100%;opacity:0"></div>'
+            f'transform-origin:50% 100%;{estilo_barra}"></div>'
         )
         if cifra:
+            estilo_cifra = f"opacity:{op}" if ya_estaba else "opacity:0"
             piezas.append(
                 f'<div class="clip cifra" id="cifra{i}" data-start="0" data-duration="{duracion}" '
                 f'style="position:absolute;left:{x}px;top:{y - int(ancho*0.062)}px;width:{barra_ancho}px;'
-                f'text-align:center;color:{color};opacity:0">{_esc(cifra)}</div>'
+                f'text-align:center;color:{color};{estilo_cifra}">{_esc(cifra)}</div>'
             )
+        estilo_rot = (f"opacity:{op}" if ya_estaba else "opacity:0.25" if not es_nuevo else "opacity:0")
         piezas.append(
             f'<div class="clip rotulo" id="rot{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x}px;top:{zona_top + zona_alto + int(ancho*0.022)}px;'
-            f'width:{barra_ancho}px;text-align:center;line-height:1.2;opacity:0">{_esc(etq)}</div>'
+            f'width:{barra_ancho}px;text-align:center;line-height:1.2;{estilo_rot}">{_esc(etq)}</div>'
         )
-        op, esc = _enfasis(i, plano, n)
-        if aparece:
-            t = 0.25 + i * 0.35
+        if es_nuevo:
+            t = 0.25 + (i - previo) * 0.35
             tweens.append(
                 f'tl.fromTo("#barra{i}", {{ scaleY: 0, opacity: 1 }}, '
                 f'{{ scaleY: {esc}, opacity: {op}, duration: 0.55, ease: "power2.out" }}, {t:.2f});'
@@ -310,25 +350,14 @@ def _comparacion(plano, ancho, alto_libre, duracion):
                 tweens.append(
                     f'tl.fromTo("#cifra{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.4:.2f});'
                 )
-            if i == _foco(plano, n):
-                # El acento del plano: un pulso sostenido sobre lo que este
-                # plano viene a decir. Va después de que el diagrama ya está
-                # armado, así que no rompe la regla de "nada desaparece".
-                tweens.append(
-                    f'tl.fromTo("#barra{i}", {{ filter: "brightness(1)" }}, '
-                    f'{{ filter: "brightness(1.35)", duration: 0.9, ease: "sine.inOut", '
-                    f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
-                )
-        else:
-            # Las piezas que este plano todavía no revela quedan como hueco
-            # tenue: el espectador ve que falta algo, y el plano siguiente lo
-            # llena en el mismo lugar. Eso es lo que da la sensación de avance.
+        if i == _foco(plano, n):
+            # El acento del plano: un pulso sostenido sobre lo que este
+            # plano viene a decir. Va después de que el diagrama ya está
+            # armado, así que no rompe la regla de "nada desaparece".
             tweens.append(
-                f'tl.fromTo("#barra{i}", {{ scaleY: 0.06, opacity: 0 }}, '
-                f'{{ scaleY: 0.06, opacity: 0.16, duration: 0.4 }}, 0.3);'
-            )
-            tweens.append(
-                f'tl.fromTo("#rot{i}", {{ opacity: 0 }}, {{ opacity: 0.25, duration: 0.3 }}, 0.5);'
+                f'tl.fromTo("#barra{i}", {{ filter: "brightness(1)" }}, '
+                f'{{ filter: "brightness(1.35)", duration: 0.9, ease: "sine.inOut", '
+                f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
             )
     return piezas, tweens
 
@@ -338,9 +367,12 @@ def _proporcion(plano, ancho, alto_libre, duracion):
     etiquetas = plano["etiquetas"] or ["Parte", "Resto"]
     valores, con_unidad = _valores(plano, min(len(etiquetas), 4) or 2)
     total = sum(valores) or 1.0
-    fraccion = valores[0] / total
+    fraccion_base = valores[0] / total
+    fraccion = fraccion_base
+    fraccion_previa = fraccion_base
     if plano["total"] > 1:
         fraccion *= plano["indice"] / plano["total"]
+        fraccion_previa *= (plano["indice"] - 1) / plano["total"]
 
     radio = int(min(ancho * 0.36, alto_libre * 0.30))
     grosor = int(radio * 0.30)
@@ -358,19 +390,27 @@ def _proporcion(plano, ancho, alto_libre, duracion):
         f'</svg>',
         f'<div class="clip" id="centro" data-start="0" data-duration="{duracion}" '
         f'style="position:absolute;left:0;top:{cy - int(ancho*0.05)}px;width:{ancho}px;text-align:center;'
-        f'font-size:{int(ancho*0.085)}px;font-weight:800;color:{color};opacity:0">'
+        f'font-size:{int(ancho*0.085)}px;font-weight:800;color:{color};'
+        f'{"opacity:0" if plano["indice"] == 1 else "opacity:1"}">'
         f'{_esc(_fmt(fraccion * 100, con_unidad) + "%" if con_unidad else "")}</div>',
         f'<div class="clip rotulo" id="pie" data-start="0" data-duration="{duracion}" '
         f'style="position:absolute;left:0;top:{cy + radio + int(ancho*0.05)}px;width:{ancho}px;'
-        f'text-align:center;padding:0 {int(ancho*0.09)}px;opacity:0">{_esc(etiquetas[0])}</div>',
+        f'text-align:center;padding:0 {int(ancho*0.09)}px;'
+        f'{"opacity:0" if plano["indice"] == 1 else "opacity:1"}">{_esc(etiquetas[0])}</div>',
     ]
+    # El anillo avanza desde donde quedó en el plano anterior, no desde cero:
+    # mismo motivo que la línea de evolución. El texto y el pie sí son fijos
+    # dentro de una escena de proporción (una sola fracción, un solo rótulo),
+    # así que solo animan en el primer plano.
+    restante_previo = circ * (1 - fraccion_previa)
     restante = circ * (1 - fraccion)
     tweens = [
-        f'tl.fromTo("#arco", {{ strokeDashoffset: {circ:.1f} }}, '
+        f'tl.fromTo("#arco", {{ strokeDashoffset: {restante_previo:.1f} }}, '
         f'{{ strokeDashoffset: {restante:.1f}, duration: 1.1, ease: "power2.inOut" }}, 0.3);',
-        f'tl.fromTo("#centro", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.8);',
-        f'tl.fromTo("#pie", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.9);',
     ]
+    if plano["indice"] == 1:
+        tweens.append(f'tl.fromTo("#centro", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.8);')
+        tweens.append(f'tl.fromTo("#pie", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.9);')
     return piezas, tweens
 
 
@@ -407,30 +447,42 @@ def _evolucion(plano, ancho, alto_libre, duracion):
     # El trazo se dibuja con dasharray calculado por getTotalLength en el
     # navegador: es lo que recomienda el propio componente del catálogo, y a
     # diferencia del atributo pathLength da el mismo píxel en cada seek.
+    # El trazo avanza desde donde lo dejó el plano ANTERIOR, no desde cero: sin
+    # esto, cada plano volvía a dibujar la línea entera desde el principio
+    # aunque ya se hubiera trazado hasta la mitad en el plano previo.
+    fraccion_previa = _revelado_previo(plano, n) / n
     tweens = [
         'var _l = document.getElementById("linea"); var _L = _l.getTotalLength();',
         '_l.setAttribute("stroke-dasharray", _L); _l.setAttribute("stroke-dashoffset", _L);',
-        f'tl.fromTo("#linea", {{ strokeDashoffset: _L }}, '
+        f'tl.fromTo("#linea", {{ strokeDashoffset: _L * {1 - fraccion_previa:.3f} }}, '
         f'{{ strokeDashoffset: _L * {1 - visibles / n:.3f}, duration: 1.3, ease: "none" }}, 0.25);',
     ]
+    previo = _revelado_previo(plano, n)
     for i, (x, y) in enumerate(puntos):
         r = int(ancho * 0.022)
         vis = i < visibles
+        es_nuevo = previo <= i < visibles
+        ya_estaba = i < previo
+        op, esc = _enfasis(i, plano, n)
+        esc_pt = 1.35 if vis and i == _foco(plano, n) else esc
+
+        estilo_pt = f"opacity:{op};transform:scale({esc_pt})" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip" id="pt{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x - r:.0f}px;top:{y - r:.0f}px;width:{2*r}px;height:{2*r}px;'
-            f'border-radius:50%;background:{color};opacity:0"></div>'
+            f'border-radius:50%;background:{color};{estilo_pt}"></div>'
         )
+        estilo_etq = f"opacity:{op}" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip rotulo" id="etq{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x - int(ancho*0.14):.0f}px;top:{abajo + int(ancho*0.03)}px;'
-            f'width:{int(ancho*0.28)}px;text-align:center;line-height:1.2;opacity:0">'
+            f'width:{int(ancho*0.28)}px;text-align:center;line-height:1.2;{estilo_etq}">'
             f'{_esc(etiquetas[i]) if i < len(etiquetas) else ""}</div>'
         )
-        t = 0.35 + i * (1.2 / n)
-        op, esc = _enfasis(i, plano, n)
-        tweens.append(f'tl.fromTo("#pt{i}", {{ opacity: 0, scale: 0.6 }}, {{ opacity: {op}, scale: {1.35 if vis and i == _foco(plano, n) else esc}, duration: 0.3 }}, {t:.2f});')
-        tweens.append(f'tl.fromTo("#etq{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.1:.2f});')
+        if es_nuevo:
+            t = 0.35 + (i - previo) * (1.2 / n)
+            tweens.append(f'tl.fromTo("#pt{i}", {{ opacity: 0, scale: 0.6 }}, {{ opacity: {op}, scale: {esc_pt}, duration: 0.3 }}, {t:.2f});')
+            tweens.append(f'tl.fromTo("#etq{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.1:.2f});')
         if vis and i == _foco(plano, n):
             tweens.append(
                 f'tl.fromTo("#pt{i}", {{ filter: "brightness(1)" }}, '
@@ -455,46 +507,75 @@ def _proceso(plano, ancho, alto_libre, duracion):
     top0 = int(alto_libre * 0.22) + max(0, (int(alto_libre * 0.62) - total_alto) // 2)
     x = int(ancho * 0.13)
 
+    previo = _revelado_previo(plano, n)
     piezas, tweens = [], []
     for i, etq in enumerate(etiquetas):
         y = top0 + i * (caja_alto + hueco)
         color = ACENTOS[i % len(ACENTOS)]
         vis = i < visibles
+        es_nuevo = previo <= i < visibles
+        ya_estaba = i < previo
+        op, esc = _enfasis(i, plano, n)
+
+        estilo_caja = f"opacity:{op};transform:scale({esc})" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip" id="caja{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x}px;top:{y}px;width:{caja_ancho}px;height:{caja_alto}px;'
             f'border:{max(3,int(ancho*0.005))}px solid {color};border-radius:{int(caja_alto*0.22)}px;'
             f'background:{color}14;display:flex;align-items:center;justify-content:center;'
             f'padding:0 {int(ancho*0.03)}px;text-align:center;font-size:{int(ancho*0.038)}px;'
-            f'font-weight:700;line-height:1.15;opacity:0">{_esc(etq)}</div>'
+            f'font-weight:700;line-height:1.15;{estilo_caja}">{_esc(etq)}</div>'
         )
         if i < n - 1:
+            # La flecha conecta la caja i con la i+1: existe una vez que la
+            # caja i ya está, y se ilumina del todo recién cuando llega la
+            # i+1. Cada uno de esos dos momentos anima una sola vez —cuando
+            # ocurre por primera vez—, nunca de nuevo en los planos siguientes.
             fy = y + caja_alto
+            existe_ahora = i < visibles
+            existia_antes = i < previo
+            brillante_ahora = (i + 1) < visibles
+            brillante_antes = (i + 1) < previo
+            if not existe_ahora:
+                estilo_flecha = "opacity:0"
+            elif not existia_antes:
+                estilo_flecha = "opacity:0"  # el tween de abajo la hace aparecer
+            else:
+                estilo_flecha = f"opacity:{1 if brillante_antes else 0.2}"
             piezas.append(
                 f'<svg id="flecha{i}" class="clip" data-start="0" data-duration="{duracion}" '
                 f'width="{ancho}" height="{alto_libre}" '
-                f'style="position:absolute;left:0;top:0;opacity:0">'
+                f'style="position:absolute;left:0;top:0;{estilo_flecha}">'
                 f'<line x1="{ancho//2}" y1="{fy + 4}" x2="{ancho//2}" y2="{fy + hueco - 14}" '
                 f'stroke="{TENUE}" stroke-width="4"/>'
                 f'<polygon points="{ancho//2 - 11},{fy + hueco - 16} {ancho//2 + 11},{fy + hueco - 16} '
                 f'{ancho//2},{fy + hueco - 2}" fill="{TENUE}"/></svg>'
             )
-        op, esc = _enfasis(i, plano, n)
-        t = 0.3 + i * 0.45
-        tweens.append(
-            f'tl.fromTo("#caja{i}", {{ opacity: 0, scale: 0.9 }}, '
-            f'{{ opacity: {op}, scale: {esc}, duration: 0.45, ease: "back.out(1.6)" }}, {t:.2f});'
-        )
+        if es_nuevo:
+            t = 0.3 + (i - previo) * 0.45
+            tweens.append(
+                f'tl.fromTo("#caja{i}", {{ opacity: 0, scale: 0.9 }}, '
+                f'{{ opacity: {op}, scale: {esc}, duration: 0.45, ease: "back.out(1.6)" }}, {t:.2f});'
+            )
+            if i < n - 1 and not existia_antes:
+                tweens.append(
+                    f'tl.fromTo("#flecha{i}", {{ opacity: 0 }}, '
+                    f'{{ opacity: {1 if brillante_ahora else 0.2}, duration: 0.3 }}, {t + 0.3:.2f});'
+                )
+        if i < n - 1 and existe_ahora and existia_antes and brillante_ahora != brillante_antes:
+            # La caja i ya estaba de un plano anterior, y recién ahora llegó
+            # la i+1: la flecha pasa de tenue a plena, sin volver a aparecer
+            # desde cero.
+            t_brillo = 0.3 + ((i + 1) - previo) * 0.45
+            tweens.append(
+                f'tl.fromTo("#flecha{i}", {{ opacity: 0.2 }}, '
+                f'{{ opacity: 1, duration: 0.3 }}, {t_brillo:.2f});'
+            )
         if vis and i == _foco(plano, n):
             tweens.append(
                 f'tl.fromTo("#caja{i}", {{ filter: "brightness(1)" }}, '
                 f'{{ filter: "brightness(1.4)", duration: 0.9, ease: "sine.inOut", '
                 f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
-            )
-        if i < n - 1:
-            tweens.append(
-                f'tl.fromTo("#flecha{i}", {{ opacity: 0 }}, '
-                f'{{ opacity: {1 if i < visibles - 1 else 0.2}, duration: 0.3 }}, {t + 0.3:.2f});'
             )
     return piezas, tweens
 
@@ -509,6 +590,10 @@ def _estructura(plano, ancho, alto_libre, duracion):
 
     cx, cy = ancho // 2, int(alto_libre * 0.34)
     r_centro = int(ancho * 0.15)
+    # El núcleo existe desde el primer plano de la escena, así que solo anima
+    # su entrada ahí; en los siguientes ya está puesto.
+    es_primer_plano = plano["indice"] == 1
+    estilo_nucleo = "opacity:0" if es_primer_plano else "opacity:1;transform:scale(1)"
     piezas = [
         f'<div class="clip" id="nucleo" data-start="0" data-duration="{duracion}" '
         f'style="position:absolute;left:{cx - r_centro}px;top:{cy - r_centro}px;'
@@ -516,42 +601,51 @@ def _estructura(plano, ancho, alto_libre, duracion):
         f'border:{max(3,int(ancho*0.006))}px solid {ACENTOS[0]};background:{ACENTOS[0]}1f;'
         f'display:flex;align-items:center;justify-content:center;text-align:center;'
         f'padding:{int(ancho*0.02)}px;font-size:{int(ancho*0.034)}px;font-weight:800;'
-        f'line-height:1.15;opacity:0">{_esc(centro_etq)}</div>'
+        f'line-height:1.15;{estilo_nucleo}">{_esc(centro_etq)}</div>'
     ]
-    tweens = [
-        f'tl.fromTo("#nucleo", {{ opacity: 0, scale: 0.7 }}, '
-        f'{{ opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.7)" }}, 0.25);'
-    ]
+    tweens = []
+    if es_primer_plano:
+        tweens.append(
+            f'tl.fromTo("#nucleo", {{ opacity: 0, scale: 0.7 }}, '
+            f'{{ opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.7)" }}, 0.25);'
+        )
     fila_top = cy + r_centro + int(alto_libre * 0.08)
     util = ancho - 2 * int(ancho * 0.06)
     hueco = int(util * 0.04)
     p_ancho = (util - hueco * (n - 1)) // n
     p_alto = int(alto_libre * 0.16)
+    previo = _revelado_previo(plano, n)
     for i, etq in enumerate(partes):
         x = int(ancho * 0.06) + i * (p_ancho + hueco)
         color = ACENTOS[(i + 1) % len(ACENTOS)]
         vis = i < visibles
+        es_nuevo = previo <= i < visibles
+        ya_estaba = i < previo
+        op, esc = _enfasis(i, plano, n)
+
+        estilo_rama = f"opacity:{0.9 if vis else 0.15}" if ya_estaba else "opacity:0"
         piezas.append(
             f'<svg id="rama{i}" class="clip" data-start="0" data-duration="{duracion}" '
-            f'width="{ancho}" height="{alto_libre}" style="position:absolute;left:0;top:0;opacity:0">'
+            f'width="{ancho}" height="{alto_libre}" style="position:absolute;left:0;top:0;{estilo_rama}">'
             f'<path d="M{cx},{cy + r_centro} C{cx},{fila_top - 30} {x + p_ancho//2},{fila_top - 40} '
             f'{x + p_ancho//2},{fila_top}" fill="none" stroke="{color}" stroke-width="3"/></svg>'
         )
+        estilo_parte = f"opacity:{op};transform:scale({esc})" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip" id="parte{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x}px;top:{fila_top}px;width:{p_ancho}px;height:{p_alto}px;'
             f'border:3px solid {color};border-radius:{int(p_alto*0.18)}px;background:{color}14;'
             f'display:flex;align-items:center;justify-content:center;text-align:center;'
             f'padding:{int(ancho*0.012)}px;font-size:{int(ancho*0.030)}px;font-weight:700;'
-            f'line-height:1.15;opacity:0">{_esc(etq)}</div>'
+            f'line-height:1.15;{estilo_parte}">{_esc(etq)}</div>'
         )
-        t = 0.7 + i * 0.35
-        tweens.append(f'tl.fromTo("#rama{i}", {{ opacity: 0 }}, {{ opacity: {0.9 if vis else 0.15}, duration: 0.35 }}, {t:.2f});')
-        op, esc = _enfasis(i, plano, n)
-        tweens.append(
-            f'tl.fromTo("#parte{i}", {{ opacity: 0, y: 22 }}, '
-            f'{{ opacity: {op}, y: 0, scale: {esc}, duration: 0.4, ease: "power2.out" }}, {t + 0.15:.2f});'
-        )
+        if es_nuevo:
+            t = 0.7 + (i - previo) * 0.35
+            tweens.append(f'tl.fromTo("#rama{i}", {{ opacity: 0 }}, {{ opacity: {0.9 if vis else 0.15}, duration: 0.35 }}, {t:.2f});')
+            tweens.append(
+                f'tl.fromTo("#parte{i}", {{ opacity: 0, y: 22 }}, '
+                f'{{ opacity: {op}, y: 0, scale: {esc}, duration: 0.4, ease: "power2.out" }}, {t + 0.15:.2f});'
+            )
         if vis and i == _foco(plano, n):
             tweens.append(
                 f'tl.fromTo("#parte{i}", {{ filter: "brightness(1)" }}, '
@@ -576,46 +670,65 @@ def _metafora(plano, ancho, alto_libre, duracion):
     util = ancho - 2 * int(ancho * 0.08)
     hueco = (util - n * lado) // max(1, n - 1) if n > 1 else 0
 
+    previo = _revelado_previo(plano, n)
     piezas, tweens = [], []
     for i, etq in enumerate(etiquetas):
         x = int(ancho * 0.08) + i * (lado + hueco)
         color = ACENTOS[i % len(ACENTOS)]
         vis = i < visibles
+        es_nuevo = previo <= i < visibles
+        ya_estaba = i < previo
+        op, esc = _enfasis(i, plano, n)
+
+        estilo_fig = f"opacity:{op};transform:scale({esc})" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip" id="fig{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x}px;top:{cy - lado//2}px;width:{lado}px;height:{lado}px;'
             f'border-radius:{int(lado*0.22)}px;border:{max(3,int(ancho*0.006))}px solid {color};'
-            f'background:{color}1f;opacity:0"></div>'
+            f'background:{color}1f;{estilo_fig}"></div>'
         )
+        estilo_figrot = f"opacity:{op}" if ya_estaba else "opacity:0"
         piezas.append(
             f'<div class="clip rotulo" id="figrot{i}" data-start="0" data-duration="{duracion}" '
             f'style="position:absolute;left:{x - int(ancho*0.02)}px;top:{cy + lado//2 + int(ancho*0.025)}px;'
-            f'width:{lado + int(ancho*0.04)}px;text-align:center;line-height:1.2;opacity:0">{_esc(etq)}</div>'
+            f'width:{lado + int(ancho*0.04)}px;text-align:center;line-height:1.2;{estilo_figrot}">{_esc(etq)}</div>'
         )
         if i < n - 1:
             fx = x + lado
+            brillante_ahora = (i + 1) < visibles
+            brillante_antes = (i + 1) < previo
+            existia_antes = i < previo
+            if i >= visibles:
+                estilo_rel = "opacity:0"
+            elif not existia_antes:
+                estilo_rel = "opacity:0"
+            else:
+                estilo_rel = f"opacity:{1 if brillante_antes else 0.2}"
             piezas.append(
                 f'<svg id="rel{i}" class="clip" data-start="0" data-duration="{duracion}" '
-                f'width="{ancho}" height="{alto_libre}" style="position:absolute;left:0;top:0;opacity:0">'
+                f'width="{ancho}" height="{alto_libre}" style="position:absolute;left:0;top:0;{estilo_rel}">'
                 f'<line x1="{fx + 10}" y1="{cy}" x2="{fx + hueco - 18}" y2="{cy}" stroke="{TENUE}" stroke-width="4"/>'
                 f'<polygon points="{fx + hueco - 20},{cy - 11} {fx + hueco - 20},{cy + 11} '
                 f'{fx + hueco - 4},{cy}" fill="{TENUE}"/></svg>'
             )
-        op, esc = _enfasis(i, plano, n)
-        t = 0.3 + i * 0.45
-        tweens.append(
-            f'tl.fromTo("#fig{i}", {{ opacity: 0, scale: 0.8 }}, '
-            f'{{ opacity: {op}, scale: {esc}, duration: 0.5, ease: "back.out(1.5)" }}, {t:.2f});'
-        )
-        tweens.append(f'tl.fromTo("#figrot{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.25:.2f});')
+        if es_nuevo:
+            t = 0.3 + (i - previo) * 0.45
+            tweens.append(
+                f'tl.fromTo("#fig{i}", {{ opacity: 0, scale: 0.8 }}, '
+                f'{{ opacity: {op}, scale: {esc}, duration: 0.5, ease: "back.out(1.5)" }}, {t:.2f});'
+            )
+            tweens.append(f'tl.fromTo("#figrot{i}", {{ opacity: 0 }}, {{ opacity: {op}, duration: 0.3 }}, {t + 0.25:.2f});')
+            if i < n - 1 and not existia_antes:
+                tweens.append(f'tl.fromTo("#rel{i}", {{ opacity: 0 }}, {{ opacity: {1 if brillante_ahora else 0.2}, duration: 0.3 }}, {t + 0.35:.2f});')
         if vis and i == _foco(plano, n):
             tweens.append(
                 f'tl.fromTo("#fig{i}", {{ filter: "brightness(1)" }}, '
                 f'{{ filter: "brightness(1.4)", duration: 0.9, ease: "sine.inOut", '
                 f'yoyo: true, repeat: 1 }}, {_SEG_ACENTO});'
             )
-        if i < n - 1:
-            tweens.append(f'tl.fromTo("#rel{i}", {{ opacity: 0 }}, {{ opacity: {1 if i < visibles - 1 else 0.2}, duration: 0.3 }}, {t + 0.35:.2f});')
+        if i < n - 1 and i < visibles and i < previo and brillante_ahora != brillante_antes:
+            t_brillo = 0.3 + ((i + 1) - previo) * 0.45
+            tweens.append(f'tl.fromTo("#rel{i}", {{ opacity: 0.2 }}, {{ opacity: 1, duration: 0.3 }}, {t_brillo:.2f});')
     return piezas, tweens
 
 
@@ -641,4 +754,5 @@ def construir_html(prompt_visual, ancho, alto, alto_libre, duracion):
               else (plano["descripcion"][:46] or ""))
     if plano["arquetipo"] == "comparacion" and len(plano["etiquetas"]) > 1:
         titulo = " vs ".join(plano["etiquetas"][:2])
-    return _documento(piezas, tweens, ancho, alto, alto_libre, duracion, titulo)
+    return _documento(piezas, tweens, ancho, alto, alto_libre, duracion, titulo,
+                       titulo_nuevo=(plano["indice"] == 1))
