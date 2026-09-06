@@ -1,0 +1,32 @@
+# Dia: 1
+# Tema: El efecto paradoja de forzar la calma durante momentos de alta tensión.
+# TituloHook: Decirte 'cálmate' duplica tu ansiedad.
+# DuracionObjetivoMin: 0.75
+### ESCENA
+VISUAL: [comparacion] (plano 1 de 2) Una barra inicial etiquetada Nivel normal a media altura. Etiquetas: Nivel normal, Intentar calmarse.
+VISUAL: [comparacion] (plano 2 de 2) Aparece una segunda barra etiquetada Intentar calmarse que se dispara al doble de altura. Etiquetas: Nivel normal, Intentar calmarse.
+TEXTO: Decirte cálmate cuando estás muy ansioso solo consigue duplicar tu nivel de estrés.
+### ESCENA
+VISUAL: [proceso] (plano 1 de 3) Un nodo inicial etiquetado Freno forzado se enciende en pantalla. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
+VISUAL: [proceso] (plano 2 de 3) Una flecha conecta hacia un segundo nodo rotulado Señal de alarma. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
+VISUAL: [proceso] (plano 3 de 3) Un tercer nodo etiquetado Respuesta de amenaza se ilumina completando la ruta. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
+TEXTO: Forzar el freno de golpe le indica a tu cerebro que estás en peligro inminente.
+### ESCENA
+VISUAL: [evolucion] (plano 1 de 3) Un indicador marca el Nivel 100 en la parte superior. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
+VISUAL: [evolucion] (plano 2 de 3) Una línea intenta caer directamente hacia el Nivel 0 en una trayectoria vertical. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
+VISUAL: [evolucion] (plano 3 de 3) El indicador parpadea resaltando el bloqueo que genera intentar ese salto brusco. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
+TEXTO: Tu cuerpo no puede pasar de cien a cero en un instante sin generar más tensión.
+### ESCENA
+VISUAL: [comparacion] (plano 1 de 3) Una barra de activación etiquetada Ansiedad sube hasta el nivel máximo. Etiquetas: Ansiedad, Entusiasmo.
+VISUAL: [comparacion] (plano 2 de 3) Al lado aparece una barra etiquetada Entusiasmo exactamente a la misma altura. Etiquetas: Ansiedad, Entusiasmo.
+VISUAL: [comparacion] (plano 3 de 3) Ambas barras se alinean horizontalmente mostrando que su intensidad física es idéntica. Etiquetas: Ansiedad, Entusiasmo.
+TEXTO: Lo curioso es que la ansiedad y el entusiasmo comparten exactamente la misma activación física.
+### ESCENA
+VISUAL: [proceso] (plano 1 de 3) Un motor central genera un flujo etiquetado Adrenalina. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
+VISUAL: [proceso] (plano 2 de 3) La etiqueta inicial de Miedo sobre la señal se apaga y se desconecta. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
+VISUAL: [proceso] (plano 3 de 3) Se activa la nueva Etiqueta Emoción sobre el mismo flujo de energía. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
+TEXTO: En lugar de exigir paz, reinterpreta esa adrenalina diciendo en voz alta: estoy emocionado.
+### ESCENA
+VISUAL: [proceso] (plano 1 de 2) Un flujo rotulado Energía reprimida choca contra una pared y se estanca. Etiquetas: Energía reprimida, Energía canalizada.
+VISUAL: [proceso] (plano 2 de 2) El mismo flujo cambia de dirección como Energía canalizada avanzando libremente. Etiquetas: Energía reprimida, Energía canalizada.
+TEXTO: No intentes apagar tu motor bajo presión, canaliza esa misma fuerza para actuar.

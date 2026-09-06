@@ -31,6 +31,7 @@ from google import genai
 from google.genai import types as genai_types
 
 import gemini_utils
+import plantillas_broll
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
 VERSION_CLI = "0.8.27"
@@ -39,6 +40,22 @@ VERSION_CLI = "0.8.27"
 # llamada, en vez de una llamada por escena, es lo que hace viable generar
 # un video completo (20+ escenas) sin agotar esa cuota. Ver TAM_LOTE_DEFAULT.
 TAM_LOTE_DEFAULT = 5
+
+# Cómo se escribe el HTML de cada composición:
+#   "plantillas" -> lo dibuja plantillas_broll.py. Sin API, sin costo, sin
+#                   reintentos, y con continuidad entre planos por construcción.
+#   "gemini"     -> se lo pide al modelo, como antes.
+# El default son las plantillas: el modelo no aportaba nada que un diagrama de
+# barras necesite, y sí aportaba costo, latencia y fallos (rótulos inventados,
+# gráficas que contradecían la narración, cuadros vacíos).
+MOTOR_COMPOSICION_DEFAULT = "plantillas"
+_motor_composicion = MOTOR_COMPOSICION_DEFAULT
+
+
+def configurar_motor_composicion(motor):
+    global _motor_composicion
+    _motor_composicion = motor if motor in ("plantillas", "gemini") else MOTOR_COMPOSICION_DEFAULT
+    return _motor_composicion
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
@@ -332,6 +349,12 @@ def _version_instrucciones():
     Entra también el bloque de continuidad: cambia el dibujo de cada plano
     igual que las reglas base, y sin él en la huella los planos cacheados
     seguirían siendo los sueltos de antes."""
+    if _motor_composicion == "plantillas":
+        # Con plantillas el dibujo no depende del prompt de sistema sino del
+        # código que lo genera: la huella es la del módulo, para que al mejorar
+        # una plantilla no se reutilicen los clips dibujados con la anterior.
+        with open(plantillas_broll.__file__, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:8]
     huella = _PROMPT_SISTEMA + CONTINUIDAD_ENTRE_PLANOS
     return hashlib.sha256(huella.encode("utf-8")).hexdigest()[:8]
 
@@ -340,7 +363,8 @@ def _ruta_cache(prompt_visual, aspecto):
     # Además del prompt de la escena, entran la duración (un clip armado para
     # otro largo ya no sirve) y la versión de las instrucciones de dibujo.
     clave = hashlib.sha256(
-        f"{aspecto}|{DURACION_ESCENA_SEG}|{_version_instrucciones()}|{prompt_visual}".encode("utf-8")
+        f"{aspecto}|{DURACION_ESCENA_SEG}|{_motor_composicion}|"
+        f"{_version_instrucciones()}|{prompt_visual}".encode("utf-8")
     ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
@@ -706,6 +730,32 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
     return None
 
 
+def _generar_con_plantillas(prompts_visuales, aspecto, rutas):
+    """Dibuja cada plano pendiente con plantillas_broll y lo renderiza.
+
+    No hay lote ni reintentos porque no hay nada que reintentar: el HTML es una
+    función pura del texto del plano, así que si falla lo hace siempre igual y
+    volver a pedirlo daría exactamente lo mismo. Un fallo acá es un bug de este
+    repo, no una respuesta desafortunada de un modelo, y tiene que verse como
+    tal en el log."""
+    ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+    libre = _alto_dibujable(ancho, alto)
+    for i, prompt in enumerate(prompts_visuales):
+        if rutas[i] is not None:
+            continue
+        ruta_salida = _ruta_cache(prompt, aspecto)
+        try:
+            html = plantillas_broll.construir_html(
+                prompt, ancho, alto, libre, DURACION_ESCENA_SEG
+            )
+            _renderizar_composicion(html, ruta_salida)
+            if _archivo_valido(ruta_salida):
+                rutas[i] = ruta_salida
+        except Exception as exc:
+            logger.error(f"Plantilla del plano {i} falló: {exc}")
+    return rutas
+
+
 def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
                                   tam_lote=TAM_LOTE_DEFAULT, reintentos=2, tamanos_escena=None):
     """Genera clips para una lista de prompts, agrupando las llamadas a Gemini
@@ -730,6 +780,9 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
         ruta = _ruta_cache(prompt, aspecto)
         if _clip_cacheado_utilizable(ruta):
             rutas[i] = ruta
+
+    if _motor_composicion == "plantillas":
+        return _generar_con_plantillas(prompts_visuales, aspecto, rutas)
 
     cliente = _obtener_cliente()
     # Motivo por el que falló cada escena, para dárselo al modelo en el

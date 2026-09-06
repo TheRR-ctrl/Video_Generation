@@ -22,6 +22,17 @@ name: Pipeline de contenido
 on:
   workflow_dispatch:
     inputs:
+      desde_etapa:
+        description: "Empezar desde esta etapa. 'video' salta plan y guion, o sea que NO llama a Gemini para texto (necesita un guion ya existente o usar_guion_semilla)"
+        required: false
+        default: "plan"
+        type: choice
+        options: ["plan", "guion", "video", "publicar"]
+      usar_guion_semilla:
+        description: "Copiar guion.semilla.txt (escrito a mano, versionado en el repo) como guion de esta corrida. Con desde_etapa=video y hasta_etapa=video, la corrida entera no toca la API de Gemini"
+        required: false
+        default: false
+        type: boolean
       hasta_etapa:
         description: "Correr solo hasta esta etapa (plan, guion, video, publicar)"
         required: false
@@ -149,6 +160,13 @@ jobs:
           rm -rf "Videos Creados"
           echo "Videos descartados: se vuelven a montar con el guion que ya está cacheado."
 
+      - name: Usar el guion semilla versionado en el repo (usar_guion_semilla)
+        if: ${{ github.event.inputs.usar_guion_semilla == 'true' }}
+        run: |
+          cp guion.semilla.txt guion.txt
+          echo "Guion tomado de guion.semilla.txt (sin llamar al modelo):"
+          head -4 guion.txt
+
       - name: Restaurar credenciales de YouTube
         env:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -160,7 +178,10 @@ jobs:
       - name: Correr pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python pipeline.py --hasta "${{ github.event.inputs.hasta_etapa || 'publicar' }}"
+        run: |
+          python pipeline.py \
+            --desde "${{ github.event.inputs.desde_etapa || 'plan' }}" \
+            --hasta "${{ github.event.inputs.hasta_etapa || 'publicar' }}"
 
       - name: Subir logs, estado y videos como artefacto
         if: always()
