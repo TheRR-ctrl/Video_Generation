@@ -13,6 +13,8 @@ name: Pipeline de contenido
 # Requisitos antes de lanzarlo (ver README.md):
 #   1. Secrets del repo (Settings -> Secrets and variables -> Actions):
 #        GEMINI_API_KEY        - API key de https://aistudio.google.com/apikey
+#        PEXELS_API_KEY        - gratis en https://www.pexels.com/api/, sin tarjeta.
+#                                 Solo hace falta con motor_broll=fotos (fondos_stock.py).
 #        YOUTUBE_CLIENT_SECRET - contenido de tu client_secret.json (OAuth desktop)
 #        YOUTUBE_TOKEN         - contenido de youtube_token.json ya autorizado
 #                                 una vez en tu máquina (ver README)
@@ -178,6 +180,7 @@ jobs:
       - name: Correr pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
           python pipeline.py \
             --desde "${{ github.event.inputs.desde_etapa || 'plan' }}" \
