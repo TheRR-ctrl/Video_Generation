@@ -20,6 +20,12 @@
   "duracion_clip_veo_seg": 8,
   "motor_broll": "hyperframes",
   "motor_composicion": "plantillas",
+  "motor_metadata": "plantillas",
+  "hashtags_base": [
+    "Psicologia",
+    "DesarrolloPersonal",
+    "SaludMental"
+  ],
   "tam_lote_hyperframes": 5,
   "ducking_hyperframes": true,
   "fuerza_carve_musica": 0.3,

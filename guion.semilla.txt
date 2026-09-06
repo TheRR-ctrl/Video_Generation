@@ -1,32 +1,29 @@
 # Dia: 1
-# Tema: El efecto paradoja de forzar la calma durante momentos de alta tensión.
-# TituloHook: Decirte 'cálmate' duplica tu ansiedad.
-# DuracionObjetivoMin: 0.75
+# Tema: El efecto Zeigarnik: por qué una tarea sin terminar ocupa más espacio mental que una terminada.
+# TituloHook: ¿Por qué un mensaje sin responder te persigue más que uno que ya contestaste?
+# DuracionObjetivoMin: 0.6
 ### ESCENA
-VISUAL: [comparacion] (plano 1 de 2) Una barra inicial etiquetada Nivel normal a media altura. Etiquetas: Nivel normal, Intentar calmarse.
-VISUAL: [comparacion] (plano 2 de 2) Aparece una segunda barra etiquetada Intentar calmarse que se dispara al doble de altura. Etiquetas: Nivel normal, Intentar calmarse.
-TEXTO: Decirte cálmate cuando estás muy ansioso solo consigue duplicar tu nivel de estrés.
+VISUAL: [comparacion] (plano 1 de 2) Una barra baja etiquetada Ya respondido: apenas ocupa espacio en tu cabeza. Etiquetas: Ya respondido, Sin responder.
+VISUAL: [comparacion] (plano 2 de 2) Al lado se dispara una barra alta etiquetada Sin responder, mucho más grande que la anterior. Etiquetas: Ya respondido, Sin responder.
+TEXTO: Ese mensaje que dejaste en visto hace tres días sigue ahí, dando vueltas, aunque no quieras pensar en él.
 ### ESCENA
-VISUAL: [proceso] (plano 1 de 3) Un nodo inicial etiquetado Freno forzado se enciende en pantalla. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
-VISUAL: [proceso] (plano 2 de 3) Una flecha conecta hacia un segundo nodo rotulado Señal de alarma. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
-VISUAL: [proceso] (plano 3 de 3) Un tercer nodo etiquetado Respuesta de amenaza se ilumina completando la ruta. Etiquetas: Freno forzado, Señal de alarma, Respuesta de amenaza.
-TEXTO: Forzar el freno de golpe le indica a tu cerebro que estás en peligro inminente.
+VISUAL: [proceso] (plano 1 de 3) Un nodo inicial etiquetado Tarea abierta se enciende en pantalla. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+VISUAL: [proceso] (plano 2 de 3) Una flecha conecta hacia un segundo nodo rotulado Tensión mental. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+VISUAL: [proceso] (plano 3 de 3) Un tercer nodo etiquetado Se repite sola se ilumina completando la cadena. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+TEXTO: Se llama efecto Zeigarnik: tu cerebro guarda un lugar especial para todo lo que dejaste sin cerrar.
 ### ESCENA
-VISUAL: [evolucion] (plano 1 de 3) Un indicador marca el Nivel 100 en la parte superior. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
-VISUAL: [evolucion] (plano 2 de 3) Una línea intenta caer directamente hacia el Nivel 0 en una trayectoria vertical. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
-VISUAL: [evolucion] (plano 3 de 3) El indicador parpadea resaltando el bloqueo que genera intentar ese salto brusco. Etiquetas: Nivel 100, Nivel 0. Datos: 100,0.
-TEXTO: Tu cuerpo no puede pasar de cien a cero en un instante sin generar más tensión.
+VISUAL: [evolucion] (plano 1 de 2) Un indicador marca la Tensión al momento de dejar la tarea abierta. Etiquetas: Tarea abierta, Tarea resuelta.
+VISUAL: [evolucion] (plano 2 de 2) La línea se mantiene arriba todo el tiempo y recién cae de golpe al llegar a Tarea resuelta. Etiquetas: Tarea abierta, Tarea resuelta.
+TEXTO: Esa tensión no baja sola con el tiempo, se queda igual de alta hasta que la tarea se cierra de verdad.
 ### ESCENA
-VISUAL: [comparacion] (plano 1 de 3) Una barra de activación etiquetada Ansiedad sube hasta el nivel máximo. Etiquetas: Ansiedad, Entusiasmo.
-VISUAL: [comparacion] (plano 2 de 3) Al lado aparece una barra etiquetada Entusiasmo exactamente a la misma altura. Etiquetas: Ansiedad, Entusiasmo.
-VISUAL: [comparacion] (plano 3 de 3) Ambas barras se alinean horizontalmente mostrando que su intensidad física es idéntica. Etiquetas: Ansiedad, Entusiasmo.
-TEXTO: Lo curioso es que la ansiedad y el entusiasmo comparten exactamente la misma activación física.
+VISUAL: [estructura] (plano 1 de 2) Un núcleo central etiquetado Efecto Zeigarnik aparece en el medio. Etiquetas: Efecto Zeigarnik, Mensajes sin responder, Tareas a medias, Conversaciones pendientes.
+VISUAL: [estructura] (plano 2 de 2) Del núcleo salen tres ramas hacia Mensajes sin responder, Tareas a medias y Conversaciones pendientes. Etiquetas: Efecto Zeigarnik, Mensajes sin responder, Tareas a medias, Conversaciones pendientes.
+TEXTO: Y no es solo el celular: cualquier tarea a medias o conversación pendiente activa exactamente lo mismo.
 ### ESCENA
-VISUAL: [proceso] (plano 1 de 3) Un motor central genera un flujo etiquetado Adrenalina. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
-VISUAL: [proceso] (plano 2 de 3) La etiqueta inicial de Miedo sobre la señal se apaga y se desconecta. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
-VISUAL: [proceso] (plano 3 de 3) Se activa la nueva Etiqueta Emoción sobre el mismo flujo de energía. Etiquetas: Adrenalina, Etiqueta Miedo, Etiqueta Emoción.
-TEXTO: En lugar de exigir paz, reinterpreta esa adrenalina diciendo en voz alta: estoy emocionado.
+VISUAL: [metafora] (plano 1 de 2) Una pestaña de navegador queda abierta, ocupando su propio espacio fijo. Etiquetas: Pestaña abierta, Mente ocupada.
+VISUAL: [metafora] (plano 2 de 2) Esa pestaña abierta se conecta con un espacio idéntico ocupado en la mente. Etiquetas: Pestaña abierta, Mente ocupada.
+TEXTO: Es como una pestaña del navegador que dejaste abierta: no la estás mirando, pero sigue gastando memoria.
 ### ESCENA
-VISUAL: [proceso] (plano 1 de 2) Un flujo rotulado Energía reprimida choca contra una pared y se estanca. Etiquetas: Energía reprimida, Energía canalizada.
-VISUAL: [proceso] (plano 2 de 2) El mismo flujo cambia de dirección como Energía canalizada avanzando libremente. Etiquetas: Energía reprimida, Energía canalizada.
-TEXTO: No intentes apagar tu motor bajo presión, canaliza esa misma fuerza para actuar.
+VISUAL: [comparacion] (plano 1 de 2) Una barra alta etiquetada Sin anotar muestra la tensión de una tarea que solo vive en tu cabeza. Etiquetas: Sin anotar, Anotada.
+VISUAL: [comparacion] (plano 2 de 2) Al lado, una barra baja etiquetada Anotada muestra cómo baja la tensión en cuanto la tarea queda por escrito. Etiquetas: Sin anotar, Anotada.
+TEXTO: Por eso anotar la tarea pendiente, aunque no la resuelvas todavía, le alcanza a tu cerebro para soltarla un poco.

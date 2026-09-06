@@ -142,6 +142,10 @@ def chequeo_tecnico(ruta_video, cfg):
 # ---------------------------------------------------------
 # FASE 2: chequeo de contenido + generación de metadata
 # ---------------------------------------------------------
+# Hashtags de respaldo si config.json no trae "hashtags_base". Genéricos del
+# nicho del canal (psicología / desarrollo personal), no dependen del video.
+DEFAULT_HASHTAGS = ["Psicologia", "DesarrolloPersonal", "SaludMental"]
+
 SCHEMA_METADATA = {
     "type": "object",
     "properties": {
@@ -164,6 +168,27 @@ Recibes el título/hook y el guion completo de un video ya renderizado, y debes:
    inapropiado. Contenido reflexivo sobre ansiedad, trauma, etc. SÍ es apto siempre
    que no se presente como consejo médico, es el género del canal.
 2. Si es apto, genera título, descripción y hashtags optimizados para YouTube."""
+
+
+def generar_metadata_plantilla(titulo, cuerpo, cfg):
+    """Metadata de YouTube sin llamar a ningún modelo.
+
+    No hace falta un LLM para esto: el guion ya lo escribimos nosotros (a mano,
+    en guion.semilla.txt, o revisado antes de commitear), así que la
+    aprobación de contenido que hacía Gemini es redundante — no hay texto
+    generado a ciegas que revisar. El título es el hook tal cual (ya pasó por
+    la regla de "pregunta abierta o paradoja" de content_planner), la
+    descripción es el propio guion —es literalmente lo que dice el video, que
+    es una descripción honesta y buena para SEO— y los hashtags salen de
+    config.json en vez de que el modelo los invente cada vez."""
+    aprobado = bool(titulo and cuerpo)
+    return {
+        "aprobado": aprobado,
+        "motivo_rechazo": "" if aprobado else "Falta título o guion.",
+        "titulo_youtube": titulo[:100],
+        "descripcion_youtube": f"{titulo}\n\n{cuerpo.strip()}"[:4900],
+        "hashtags": list(cfg.get("hashtags_base") or DEFAULT_HASHTAGS)[:6],
+    }
 
 
 def revisar_y_generar_metadata(client, modelo, titulo, cuerpo):
@@ -293,7 +318,10 @@ def main():
         logger.info("Todos los videos completados ya fueron procesados anteriormente.")
         return
 
-    client = genai.Client()
+    # El cliente de Gemini solo hace falta si motor_metadata pide revisión por
+    # modelo; con "plantillas" (default) esta corrida no toca la API.
+    motor_metadata = cfg.get("motor_metadata", "plantillas")
+    client = genai.Client() if motor_metadata == "gemini" else None
     servicio_yt = None
     max_subidas = cfg.get("max_subidas_por_corrida")
     subidas_en_esta_corrida = 0
@@ -317,7 +345,10 @@ def main():
             continue
 
         try:
-            metadata = revisar_y_generar_metadata(client, cfg["modelo_revision"], video["titulo"], video.get("cuerpo", ""))
+            if motor_metadata == "gemini":
+                metadata = revisar_y_generar_metadata(client, cfg["modelo_revision"], video["titulo"], video.get("cuerpo", ""))
+            else:
+                metadata = generar_metadata_plantilla(video["titulo"], video.get("cuerpo", ""), cfg)
         except Exception as exc:
             logger.warning(f"Rechazado (error de revisión): {exc}")
             rechazados.append({"ruta": ruta, "fase": "revision", "motivo": str(exc)})
