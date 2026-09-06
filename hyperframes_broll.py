@@ -274,6 +274,32 @@ composición (empezando literalmente en "<!doctype html>"). Sin texto antes
 o después del array, sin markdown.
 """
 
+# Se agrega al prompt del lote (ya formateado) cuando todas las composiciones
+# del lote son planos consecutivos de una misma escena, es decir de una misma
+# locución. Sin esto cada plano se inventa su propia maqueta —otro encuadre,
+# otras posiciones, otra paleta— y la escena se ve como tres láminas sueltas en
+# vez de una idea que avanza. No lleva marcadores de formato: se concatena
+# después del .format().
+CONTINUIDAD_ENTRE_PLANOS = """
+IMPORTANTE — CONTINUIDAD: todas las composiciones de esta tanda son planos
+consecutivos de UNA MISMA escena, acompañando una sola locución continua. El
+espectador las ve encadenadas, sin corte de tema. Tratalas como una sola
+maqueta que evoluciona, no como dibujos independientes:
+
+- Misma paleta exacta (mismos valores hex de fondo, texto y acentos) en todas.
+- Mismo fondo y mismo encuadre: si el plano 1 tiene el título arriba y el
+  diagrama centrado, los demás mantienen esas mismas zonas y márgenes.
+- Los elementos que se repiten entre planos conservan su posición, su tamaño y
+  su etiqueta literal: si algo se llama "Ahorro" y está a la izquierda en el
+  plano 1, sigue llamándose "Ahorro" y sigue a la izquierda en el plano 2.
+- Misma tipografía y mismos tamaños de fuente para el mismo nivel jerárquico.
+- Entre un plano y el siguiente cambia SOLO lo que el avance de la idea pide:
+  se agrega un elemento, se resalta otro, avanza una cifra. Todo lo demás queda
+  igual.
+- No repitas el mismo plano dos veces: cada uno tiene que aportar algo nuevo,
+  pero partiendo de donde quedó el anterior.
+"""
+
 
 logger = logging.getLogger("hyperframes_broll")
 
@@ -293,8 +319,13 @@ def _version_instrucciones():
     El prompt de sistema decide cómo se ve el clip tanto como la descripción de
     la escena. Sin esto, mejorar las reglas de dibujo no cambia nada en el video
     siguiente: la caché entre corridas devuelve los clips hechos con las reglas
-    viejas, y la corrida "termina bien" sin haber aplicado el cambio."""
-    return hashlib.sha256(_PROMPT_SISTEMA.encode("utf-8")).hexdigest()[:8]
+    viejas, y la corrida "termina bien" sin haber aplicado el cambio.
+
+    Entra también el bloque de continuidad: cambia el dibujo de cada plano
+    igual que las reglas base, y sin él en la huella los planos cacheados
+    seguirían siendo los sueltos de antes."""
+    huella = _PROMPT_SISTEMA + CONTINUIDAD_ENTRE_PLANOS
+    return hashlib.sha256(huella.encode("utf-8")).hexdigest()[:8]
 
 
 def _ruta_cache(prompt_visual, aspecto):
@@ -305,6 +336,45 @@ def _ruta_cache(prompt_visual, aspecto):
     ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
+
+
+def _mapa_escenas(tamanos_escena, total):
+    """Índice de escena al que pertenece cada plano, o None si no se sabe.
+
+    Devolver None (y no {i: i}) es lo que preserva el comportamiento viejo
+    cuando no hay info de escenas: con un mapa de a un plano por escena, los
+    lotes salían de tamaño 1 y una llamada a Gemini por plano, que es
+    exactamente lo que el lote existe para evitar."""
+    if not tamanos_escena:
+        return None
+    mapa, plano = {}, 0
+    for escena, cantidad in enumerate(tamanos_escena):
+        for _ in range(cantidad):
+            if plano < total:
+                mapa[plano] = escena
+            plano += 1
+    for i in range(plano, total):
+        mapa[i] = len(tamanos_escena) + i
+    return mapa
+
+
+def _armar_lotes(pendientes, tam_lote, escena_de):
+    """Parte los planos pendientes en lotes sin cruzar escenas.
+
+    Los planos de una escena viajan juntos para poder pedirlos con continuidad;
+    solo se juntan escenas distintas en un mismo lote cuando entran de a una
+    entera y todavía sobra espacio."""
+    lotes, actual, escena_actual = [], [], None
+    for indice, prompt in pendientes:
+        escena = escena_de.get(indice) if escena_de else None
+        if actual and ((escena_de and escena != escena_actual) or len(actual) >= tam_lote):
+            lotes.append(actual)
+            actual = []
+        actual.append((indice, prompt))
+        escena_actual = escena
+    if actual:
+        lotes.append(actual)
+    return lotes
 
 
 def _bloque_correccion(correccion):
@@ -411,7 +481,8 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion=Non
     return html
 
 
-def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, correcciones=None):
+def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, correcciones=None,
+                                misma_escena=False):
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
     n = len(prompts_visuales)
     instrucciones = _PROMPT_SISTEMA_LOTE.format(
@@ -425,6 +496,9 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, corr
         + _bloque_correccion(correcciones.get(i - 1))
         for i, p in enumerate(prompts_visuales, 1)
     )
+    if misma_escena:
+        instrucciones += CONTINUIDAD_ENTRE_PLANOS
+
     respuesta = gemini_utils.llamar_con_reintentos(
         cliente.models.generate_content,
         model=modelo,
@@ -599,17 +673,24 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
 
 
 def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
-                                  tam_lote=TAM_LOTE_DEFAULT, reintentos=2):
-    """Genera clips para una lista de prompts (una por escena), agrupando las
-    llamadas a Gemini de a `tam_lote` escenas por solicitud en vez de una por
-    escena. Devuelve una lista de rutas alineada con prompts_visuales (None
-    en las posiciones que fallaron tras los reintentos).
+                                  tam_lote=TAM_LOTE_DEFAULT, reintentos=2, tamanos_escena=None):
+    """Genera clips para una lista de prompts, agrupando las llamadas a Gemini
+    en vez de hacer una por plano. Devuelve una lista de rutas alineada con
+    prompts_visuales (None en las posiciones que fallaron tras los reintentos).
+
+    `tamanos_escena` dice cuántos planos consecutivos pertenecen a cada escena.
+    Con ese dato, los planos de una misma escena se piden en la MISMA llamada y
+    con la instrucción de continuidad: son tomas seguidas de un mismo dibujo, no
+    dibujos distintos. Sin eso, cada plano se inventa su propia maqueta —otras
+    posiciones, otros tamaños, otro encuadre— y la escena se ve como tres
+    láminas sueltas en vez de una idea que avanza.
 
     Cada reintento solo vuelve a pedir las escenas que aún faltan (ya sea
     porque el lote completo falló, o porque el render de una escena puntual
     del lote falló) — así un fallo aislado no gasta una llamada extra en
     escenas que ya salieron bien. Lo que sigue sin clip después de todos los
     lotes se reintenta escena por escena antes de darse por vencido."""
+    escena_de = _mapa_escenas(tamanos_escena, len(prompts_visuales))
     rutas = [None] * len(prompts_visuales)
     for i, prompt in enumerate(prompts_visuales):
         ruta = _ruta_cache(prompt, aspecto)
@@ -625,13 +706,20 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
         if not pendientes:
             break
 
-        for inicio in range(0, len(pendientes), tam_lote):
-            lote = pendientes[inicio:inicio + tam_lote]
+        for lote in _armar_lotes(pendientes, tam_lote, escena_de):
             indices, prompts_lote = zip(*lote)
+            # Un lote que es exactamente una escena se pide con continuidad;
+            # uno que junta escenas sueltas, no (mezclarlas haría que dibujos de
+            # temas distintos se parezcan entre sí, que es el defecto opuesto).
+            misma_escena = (
+                bool(escena_de) and len(lote) > 1
+                and len({escena_de.get(i) for i, _ in lote}) == 1
+            )
             try:
                 htmls = _generar_composiciones_lote(
                     cliente, list(prompts_lote), aspecto, modelo,
                     {j: correcciones[idx] for j, idx in enumerate(indices) if idx in correcciones},
+                    misma_escena,
                 )
             except Exception as exc:
                 logger.warning(f"Lote HyperFrames (intento {intento}/{reintentos}, escenas {list(indices)}) falló al generar HTML: {exc}")

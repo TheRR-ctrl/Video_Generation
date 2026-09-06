@@ -771,6 +771,10 @@ def renderizar_una_historia(bloque, cfg, num=1):
             rutas_broll_lote = hyperframes_broll.generar_clips_lote_cacheados(
                 prompts_visuales, aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"],
                 tam_lote=cfg.get("tam_lote_hyperframes", hyperframes_broll.TAM_LOTE_DEFAULT),
+                # Cuántos planos trae cada escena: los de una misma escena se
+                # piden juntos y con continuidad (misma maqueta, misma paleta,
+                # mismas etiquetas) en vez de salir como dibujos sueltos.
+                tamanos_escena=[len(e["planos"]) for e in info["escenas"]],
             )
 
         clips_video = []
