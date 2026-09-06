@@ -27,6 +27,30 @@ TIMEOUT_SEG = 600
 
 logger = logging.getLogger("veo_broll")
 
+# Veo es lo ÚNICO de este pipeline que cuesta dinero de verdad: HyperFrames y
+# Manim dibujan localmente y edge-tts es gratis, así que una corrida entera con
+# el motor gratuito gasta unos centavos de texto. Una con Veo genera un clip de
+# video por plano — 15 en un short de 5 escenas — y se come el saldo prepago sin
+# avisar.
+#
+# La corrida 34003101637 se disparó sin tocar el campo motor_broll del workflow,
+# tomó el default de entonces ("veo"), generó diez clips y murió con 429. Ese
+# default ya se cambió, pero un default no alcanza: cualquier config.json viejo,
+# cualquier disparo por API y cualquier copia del repo vuelven a poder gastar sin
+# que nadie lo haya pedido explícitamente. Por eso el gasto pasa a exigir una
+# variable de entorno, que es lo único que no se activa por descuido.
+VAR_PERMISO = "PERMITIR_VEO"
+
+
+def _verificar_permiso():
+    if os.environ.get(VAR_PERMISO, "").strip().lower() not in ("1", "true", "si", "sí", "yes"):
+        raise RuntimeError(
+            f"Veo genera video de pago y está bloqueado: falta {VAR_PERMISO}=1 en el entorno. "
+            f"El motor gratuito es 'hyperframes' (motor_broll en config.json o en el workflow). "
+            f"Si de verdad querés gastar saldo de Gemini, exportá {VAR_PERMISO}=1."
+        )
+
+
 _client = None
 
 
@@ -83,6 +107,11 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_DEFAULT, 
     ruta_salida = _ruta_cache(prompt_visual, aspecto)
     if _archivo_valido(ruta_salida):
         return ruta_salida
+
+    # Se comprueba acá y no al importar: un clip que ya está en caché no cuesta
+    # nada y tiene que seguir sirviendo aunque el permiso no esté puesto. Lo que
+    # se bloquea es generar uno nuevo, que es lo que cobra.
+    _verificar_permiso()
 
     cliente = _obtener_cliente()
     for intento in range(1, reintentos + 1):
