@@ -764,6 +764,11 @@ def renderizar_una_historia(bloque, cfg, num=1):
         # así que el mismo video siempre suena igual entre corridas.
         tono_locucion = random.Random(info["hook"]).choice(TONOS_LOCUCION)
 
+        # Cómo se escribe el HTML de cada composición: "plantillas" (por
+        # defecto, sin API) o "gemini". Se fija por corrida, no por escena.
+        hyperframes_broll.configurar_motor_composicion(
+            cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
+        )
         motor = cfg.get("motor_broll", "veo")
         rutas_broll_lote = None
         if motor == "hyperframes":
