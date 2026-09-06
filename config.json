@@ -1,31 +1,44 @@
 {
+  "formato_canal": "manual",
   "carpeta_salida": "Videos Creados",
-
   "canales_referencia": [
     "https://www.youtube.com/watch?v=ca-eycdLnaY",
     "https://www.youtube.com/watch?v=Sg-YTj9jGQY"
   ],
   "videos_por_canal_referencia": 15,
   "dias_plan_contenido": 1,
-
+  "motor_tts": "edge",
   "voz_masculina": "Charon",
   "voz_femenina": "Kore",
+  "velocidad_locucion": "+8%",
+  "voz_masculina_edge": "es-MX-JorgeNeural",
+  "voz_femenina_edge": "es-MX-DaliaNeural",
   "genero_narrador": "masculino",
-
-  "duracion_min_video_seg": 240,
-  "duracion_max_video_seg": 1200,
-  "aspecto_video": "16:9",
+  "formato": "short",
+  "duracion_min_video_seg": 25,
+  "duracion_max_video_seg": 60,
+  "aspecto_video": "9:16",
   "duracion_clip_veo_seg": 8,
-
-  "motor_broll": "veo",
-
+  "motor_broll": "hyperframes",
+  "motor_composicion": "plantillas",
+  "motor_metadata": "plantillas",
+  "hashtags_base": [
+    "Psicologia",
+    "DesarrolloPersonal",
+    "SaludMental"
+  ],
+  "tam_lote_hyperframes": 5,
+  "ducking_hyperframes": true,
+  "fuerza_carve_musica": 0.3,
   "modelo_texto": "gemini-3.6-flash",
   "modelo_tts": "gemini-2.5-flash-preview-tts",
   "modelo_veo": "veo-3.1-generate-preview",
   "modelo_revision": "gemini-3.5-flash-lite",
-
   "categoria_youtube": "27",
   "buffer_horas_revision": 12,
-
-  "reintentar_existentes": false
+  "reintentar_existentes": false,
+  "modo_pruebas": true,
+  "max_llamadas_texto_por_dia": 150,
+  "max_llamadas_tts_por_dia": 60,
+  "max_clips_veo_por_dia": 0
 }

@@ -22,6 +22,8 @@ import json
 import logging
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formatos_canal
+import formato_video
 
 from google import genai
 from google.genai import types as genai_types
@@ -39,29 +41,88 @@ CONFIG_DEFAULT = {
     "videos_por_canal_referencia": 15,
     "dias_plan_contenido": 30,
     "modelo_texto": "gemini-3.6-flash",
+    "formato": "largo",
 }
 
-SCHEMA_PLAN = {
-    "type": "object",
-    "properties": {
-        "dias": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "tema": {"type": "string", "description": "Tema central del video, 1 frase."},
-                    "titulo_hook": {"type": "string", "description": "Título/hook para YouTube, genera curiosidad, sin clickbait engañoso."},
-                    "angulo": {"type": "string", "description": "Ángulo o tesis psicológica que desarrolla el video."},
-                    "palabras_clave": {"type": "array", "items": {"type": "string"}},
-                    "resumen": {"type": "string", "description": "2-4 frases con el arco del video: apertura, desarrollo, cierre. Sirve de base para el guionista."},
-                    "duracion_objetivo_min": {"type": "number", "description": "Duración objetivo del video en minutos (entre 6 y 15)."},
+# El formato manda sobre casi todo lo que sigue: un short y un video largo no se
+# planifican igual. Se lee de config.json ("formato": "short" | "largo").
+FORMATO_SHORT = "short"
+
+GUIA_SHORT = """
+
+Este canal publica SHORTS verticales para YouTube Shorts y TikTok, de 25 a 60
+segundos. Eso cambia la estrategia:
+- El video entero desarrolla UNA sola idea. Nada de "tres estrategias": una, la
+  más contraintuitiva, contada hasta el final.
+- El hook va en los primeros 2 segundos, antes de cualquier contexto. Si la
+  primera frase no genera tensión, el espectador desliza.
+- El título es corto (menos de 60 caracteres) y funciona como la frase que se
+  dice al abrir, no como el título de un ensayo.
+- El cierre remata la idea; no hay espacio para pedir suscripción ni resumir."""
+
+GUIA_LARGO = """
+
+Este canal publica videos largos horizontales de 6 a 15 minutos, con espacio
+para desarrollar varias ideas y ejemplos."""
+
+def construir_schema_plan(formato, formato_canal="manual"):
+    es_short = formato == FORMATO_SHORT
+    es_emocional = formato_canal == "emocional"
+    desc_duracion = (
+        "Duración objetivo en minutos. Es un short: entre 0.5 y 1 (o sea 30 a 60 segundos)."
+        if es_short else
+        "Duración objetivo del video en minutos (entre 6 y 15)."
+    )
+    if es_emocional:
+        desc_titulo = (
+            "Frase evocadora de menos de 60 caracteres, tipo verso o línea de carta, que "
+            "sitúe un estado de ánimo o una imagen concreta (\"A veces el silencio también "
+            "es una forma de compañía\"). NO es una pregunta de curiosidad ni un dato: es la "
+            "primera línea de una reflexión, no el gancho de un explicador."
+        )
+    else:
+        desc_titulo = (
+            "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
+            "no el título de un ensayo: tiene que abrir un hueco de curiosidad sobre algo que "
+            "el espectador ya vivió. Preferí la pregunta directa en segunda persona "
+            "(\"¿Por qué te acordás de lo que dijiste hace diez años?\"); una afirmación solo "
+            "si es una paradoja que se contradice sola (\"Intentar dormir es lo que te mantiene "
+            "despierto\"). Nunca un tema enunciado (\"La importancia del descanso\")."
+            if es_short else
+            "Título/hook para YouTube: pregunta abierta sobre algo cotidiano que el espectador "
+            "nunca se detuvo a preguntarse (\"¿Qué hacían nuestros antepasados todo el día?\"). "
+            "Genera curiosidad, sin clickbait engañoso."
+        )
+    desc_resumen = (
+        "2-3 frases con el arco de la reflexión: la imagen que abre, el sentimiento que "
+        "desarrolla y la idea en la que decanta. Sin moraleja ni consejo."
+        if es_emocional and es_short else
+        "2-3 frases con el arco del short: el hook que abre, la idea que lo explica y el "
+        "remate. Una sola idea de punta a punta."
+        if es_short else
+        "2-4 frases con el arco del video: apertura, desarrollo, cierre. Sirve de base para el guionista."
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "dias": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tema": {"type": "string", "description": "Tema central del video, 1 frase."},
+                        "titulo_hook": {"type": "string", "description": desc_titulo},
+                        "angulo": {"type": "string", "description": "Ángulo o tesis psicológica que desarrolla el video."},
+                        "palabras_clave": {"type": "array", "items": {"type": "string"}},
+                        "resumen": {"type": "string", "description": desc_resumen},
+                        "duracion_objetivo_min": {"type": "number", "description": desc_duracion},
+                    },
+                    "required": ["tema", "titulo_hook", "angulo", "palabras_clave", "resumen", "duracion_objetivo_min"],
                 },
-                "required": ["tema", "titulo_hook", "angulo", "palabras_clave", "resumen", "duracion_objetivo_min"],
             },
         },
-    },
-    "required": ["dias"],
-}
+        "required": ["dias"],
+    }
 
 SYSTEM_PROMPT = """Eres estratega de contenido para un canal de YouTube en español de
 psicología, desarrollo personal y motivación. El canal es "sin rostro": no hay
@@ -76,8 +137,34 @@ nicho, únicamente como referencia de tono y ángulo. Reglas estrictas:
   con otras palabras).
 - Los títulos deben generar curiosidad genuina, sin prometer algo que el video no
   vaya a cumplir (nada de clickbait engañoso).
+- La forma que mejor funciona en este nicho es la PREGUNTA ABIERTA sobre algo
+  cotidiano que el espectador vivió mil veces y nunca se detuvo a preguntarse.
+  El canal de referencia llegó a 160.000 suscriptores con 21 videos usando
+  exactamente eso: "¿Qué hacían nuestros antepasados todo el día?", "¿Qué
+  soñaban los primeros humanos?". Funciona porque el espectador no puede
+  contestarla solo, y esa es la razón por la que se queda.
+  Lo que NO funciona es el tema enunciado ("La psicología del descanso", "Cómo
+  mejorar tu concentración"): no abre ningún hueco, informa que el video existe.
+  La única afirmación que compite con una pregunta es la paradoja que se
+  contradice sola ("Intentar dormir es lo que te mantiene despierto"), porque el
+  hueco lo abre igual. Si tu título no es ninguna de las dos, reescribilo.
 - Evita cualquier consejo que se preste a diagnóstico clínico; es contenido de
   divulgación/autoayuda, no terapia."""
+
+SYSTEM_PROMPT_EMOCIONAL = """Eres estratega de contenido para un canal de YouTube en español
+de reflexiones breves tipo carta/poesía sobre fotografías reales evocadoras. El canal es
+"sin rostro": no hay presentador en cámara, solo narración en off pausada e íntima.
+
+Reglas:
+- Cada día del plan es una reflexión distinta (soledad, calma, nostalgia, compañía,
+  el paso del tiempo, la rutina) — no repitas el mismo sentimiento con otras palabras.
+- Nada de ángulo psicológico, consejo de autoayuda ni dato curioso: esto no explica
+  nada, evoca un estado de ánimo a partir de una imagen o situación cotidiana concreta
+  (una ventana con lluvia, una taza de té sola, un atardecer).
+- El título/hook NUNCA es una pregunta de curiosidad ni un tema enunciado: es una
+  frase evocadora, la primera línea de la reflexión en sí misma.
+- Evita cualquier consejo prescriptivo ("deberías", "la clave es"): es contemplación,
+  no divulgación."""
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("content_planner")
@@ -88,7 +175,7 @@ def cargar_config():
     if os.path.exists(RUTA_CONFIG):
         with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
             cfg.update(json.load(f))
-    return cfg
+    return formatos_canal.aplicar_formato(cfg)
 
 
 def cargar_plan():
@@ -115,22 +202,31 @@ def construir_bloque_referencia(referencias):
 
 
 def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a_generar):
+    formato = formato_video.formato_de(cfg)
+    formato_canal = cfg.get("formato_canal", "manual")
+    es_emocional = formato_canal == "emocional"
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
+    # Las referencias son canales de psicología/divulgación: mezclarlas en el prompt del
+    # formato emocional contaminaría el tono (contenido de reflexión no explica ni divulga).
+    bloque_referencia = "" if es_emocional else f"{construir_bloque_referencia(referencias)}\n\n"
     prompt = (
-        f"{construir_bloque_referencia(referencias)}\n\n"
+        f"{bloque_referencia}"
         f"Temas ya usados en este plan (no los repitas ni los parafrasees):\n{temas_existentes}\n\n"
         f"Genera {cantidad_a_generar} día(s) nuevo(s) de plan de contenido, distintos entre sí "
         f"y de los temas ya usados."
     )
 
+    instrucciones_base = SYSTEM_PROMPT_EMOCIONAL if es_emocional else SYSTEM_PROMPT
     response = llamar_con_reintentos(
         client.models.generate_content,
         model=cfg["modelo_texto"],
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=instrucciones_base + (
+                GUIA_SHORT if formato == FORMATO_SHORT else GUIA_LARGO
+            ),
             response_mime_type="application/json",
-            response_schema=SCHEMA_PLAN,
+            response_schema=construir_schema_plan(formato, formato_canal),
         ),
     )
     data = json.loads(response.text)
@@ -158,8 +254,9 @@ def main():
     client = genai.Client()
     nuevos = generar_dias_faltantes(client, cfg, referencias, plan, faltan)
     if not nuevos:
-        logger.error("El modelo no devolvió días nuevos.")
-        return
+        # Sin el raise, pipeline.py reporta esta etapa como OK aunque no se
+        # haya generado ningún día nuevo de plan.
+        raise RuntimeError("El modelo no devolvió días nuevos.")
 
     siguiente_numero = len(plan) + 1
     for i, dia in enumerate(nuevos):

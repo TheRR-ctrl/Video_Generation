@@ -26,8 +26,15 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
    modelo tiene instrucción explícita de generar ideas originales, no copiarlas.
    Salida: `pipeline_state/plan_contenido.json`.
 2. **`script_writer.py`** — convierte cada día pendiente del plan en un guion
-   completo dividido en escenas (guion + prompt visual en inglés por escena,
-   para el clip de Veo de esa escena). Salida: `guion.txt`.
+   completo dividido en escenas (guion + prompt visual por escena). El estilo
+   del prompt visual **depende de `motor_broll`**: descripción filmable en
+   inglés para Veo ("cinematic close-up, morning light"), o concepto a
+   visualizar en español para los motores que dibujan con código
+   (hyperframes/manim). Esto importa: si se le pide una toma fotorrealista a un
+   motor de motion graphics, el resultado son formas abstractas con rótulos
+   decorativos inventados que no tienen relación con la narración. Al cambiar
+   de motor hay que regenerar el guion (input `regenerar_guion` del workflow).
+   Salida: `guion.txt`.
 3. **`generar_video_maestro.py`** — por cada escena: genera la locución
    (`tts_gemini.py`), genera/recicla el clip de video de apoyo según
    `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo, o
@@ -89,17 +96,110 @@ el pipeline por primera vez.
   texto, estilo grid neón sobre fondo oscuro) y la renderiza localmente.
   Gratis, determinista (mismo prompt → mismo resultado, cacheado en
   `pipeline_state/manim_cache/`) e ideal para nichos de explicador visual
-  (matemáticas, física, espacio) en vez de video realista. Requiere las
-  dependencias nativas de Manim (Cairo, Pango) — ya instaladas en el
+  con geometría/matemática exacta (órbitas, gráficas, escalas). Requiere
+  las dependencias nativas de Manim (Cairo, Pango) — ya instaladas en el
   workflow de GitHub Actions; en local: `apt install libcairo2-dev
   libpango1.0-dev pkg-config` (Debian/Ubuntu) antes de `pip install -r
   requirements.txt`.
+- `"hyperframes"` — `hyperframes_broll.py` le pide a Gemini el *HTML* de una
+  composición de [HyperFrames](https://github.com/heygen-com/hyperframes)
+  (HTML + CSS + GSAP → mp4 vía Chrome headless) y la renderiza localmente
+  con `npx hyperframes`. Mismo trato que Manim (gratis, determinista,
+  cacheado en `pipeline_state/hyperframes_cache/`), pero mejor para motion
+  graphics tipo "anuncio" (texto kinético, transiciones, formas animadas
+  con easings declarativos) que para geometría exacta. Usa GSAP vendorizado
+  en `vendor/gsap.min.js` (no CDN, para que el render no dependa de red).
+  Requiere Node.js 22+ — ya configurado en el workflow de GitHub Actions.
+
+  **Generación por lotes** (`tam_lote_hyperframes`, default 5): en vez de
+  una llamada a Gemini por escena, pide el HTML de `tam_lote_hyperframes`
+  escenas en una sola llamada (respuesta JSON con un array de composiciones).
+  Con un guion de 27 escenas, esto baja de ~27 llamadas de texto a ~6 —
+  clave porque el tier gratuito de Gemini limita las solicitudes/día del
+  modelo de texto (no solo las de TTS o Veo), y un video completo con el
+  motor "de a una por escena" agota esa cuota antes de terminar. Un reintento
+  solo vuelve a pedir las escenas que fallaron, no el lote entero.
+
+  **Gráficas de datos (`vendor/chart-story.html`):** cuando una escena es una
+  comparación de números (tamaños, distancias, temperaturas...), el prompt de
+  sistema le ofrece a Gemini una sub-composición ya construida del catálogo
+  oficial de HyperFrames (barras/línea/donut/progreso, valores exactos, sin
+  redondear) en vez de dejarlo inventar su propia animación de datos desde
+  cero — menos renders rotos por HTML/SVG mal generado, y una gráfica con
+  mejor terminado. Vendorizada igual que `gsap.min.js` (CDN reemplazado por
+  la copia local) para que siga sin depender de red.
 
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir
 sin tocar código: pestaña **Actions** → *Pipeline de contenido* → **Run
 workflow** (funciona igual desde la app móvil de GitHub — un par de toques,
 sin terminal).
+
+**Caché entre corridas:** cada corrida del workflow arranca de un checkout
+limpio, así que sin ayuda `pipeline_state/` (los clips ya generados) y
+`guion.txt` se perderían al terminar el job — si una corrida se queda sin
+cuota gratuita a mitad de un video, la siguiente empezaría de cero y
+volvería a gastar cuota en escenas que ya habían salido bien. El workflow
+usa `actions/cache/restore` + `actions/cache/save` (por separado, no la
+acción combinada `actions/cache`) para persistir `pipeline_state/`,
+`guion.txt` y `Videos Creados/` entre corridas — clave por `run_id` +
+`restore-keys` para recuperar siempre la más reciente. Importante: el paso
+de guardado usa `if: always()` a propósito, porque la acción combinada
+`actions/cache` solo guarda cuando el job termina en éxito (`post-if:
+success()` en su definición) — como este pipeline casi siempre "falla" al
+toparse con la cuota a mitad de un video, con la acción combinada nunca se
+guardaría nada del progreso real ya hecho.
+
+## Motor de narración (`motor_tts` en config.json)
+
+- `"gemini"` (default) — `tts_gemini.py`. La capa gratuita tiene un límite
+  duro de **10 solicitudes/día por proyecto** — no alcanza para un solo
+  video de guion largo (20+ escenas), y una suscripción de consumidor tipo
+  Google One/Gemini Advanced **no** sube ese límite (solo lo hace habilitar
+  facturación de pago por uso en el proyecto de la API key).
+- `"edge"` — `tts_edge.py`, usa [edge-tts](https://github.com/rany2/edge-tts)
+  (voces neuronales de Microsoft Edge). Gratis, sin límite diario, mismo
+  motor que ya usa el pipeline hermano `video-scout-pipeline`. Voces por
+  defecto: `voz_masculina_edge` / `voz_femenina_edge` en config.json
+  (`es-MX-JorgeNeural` / `es-MX-DaliaNeural`).
+
+Si el pipeline te está topando con 429 `RESOURCE_EXHAUSTED` en la etapa de
+locución, cambiá `motor_tts` a `"edge"`.
+
+**Subtítulos:** con `"edge"` los subtítulos salen de `--write-subtitles`, o sea
+con las marcas de tiempo **reales por palabra** que devuelve el propio motor de
+voz (igual que en `video-scout-pipeline`). Con `"gemini"` no hay timings
+disponibles, así que se cae a repartir la duración medida del audio
+proporcionalmente a los caracteres de cada bloque — funciona, pero se desfasa
+apenas la locución cambia de ritmo. Es una razón más para preferir `"edge"`.
+El tamaño de bloque en pantalla es `PALABRAS_POR_SUBTITULO` (4): con menos, el
+karaoke parpadea palabra por palabra y no se alcanza a leer.
+
+## Mezcla de música con ducking nativo (`hyperframes_audio_mix.py`)
+
+La narración y la música de fondo del día se mezclan con el **voiceover
+carve** de HyperFrames (skill `hyperframes-audio`) en vez de una mezcla
+estática de ffmpeg. La diferencia:
+
+- **Antes:** volumen fijo de música al 8% durante todo el video
+  (`amix` + `volume=0.08`), sin importar si hay narración en ese instante o
+  no — la música pierde presencia todo el tiempo, la haya o no.
+- **Ahora:** el carve analiza en qué bandas de frecuencia y en qué momentos
+  exactos hay voz, y solo recorta esas bandas de la música justo ahí. La
+  música conserva sus graves y agudos y sigue sonando como música, incluso
+  con narración encima — y vuelve a su volumen normal en los silencios.
+
+Implementación (`hyperframes_audio_mix.py`): arma una composición mínima de
+HyperFrames con la narración del día como voz y la música (ya recortada a la
+duración exacta y con fade-out) como "bed", corre `vendor/carve.mjs`
+(vendorizado del propio HyperFrames) para que escriba la cadena de EQ +
+automatización, renderiza esa composición (video descartable, solo importa
+el audio) y extrae la pista mezclada con ffmpeg. Requiere `@hyperframes/core`
+instalado vía `npm ci` (ver `package.json`) — si Node/npm/el carve fallan por
+lo que sea, el pipeline cae automáticamente a la mezcla estática de siempre
+(`ducking_hyperframes: false` en config.json la desactiva a propósito).
+`fuerza_carve_musica` (default 0.3, rango 0-1) controla qué tan agresivo es
+el recorte — más alto en videos donde la música es más protagonista.
 
 ## Música de fondo (`actualizar_musica.py`)
 

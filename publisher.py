@@ -30,6 +30,8 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formatos_canal
+import formato_video
 from google import genai
 from google.genai import types as genai_types
 from google.genai import errors as genai_errors
@@ -52,6 +54,13 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 
 CONFIG_DEFAULT = {
     "buffer_horas_revision": 12,
+    "formato": "largo",
+    # Tope de subidas por corrida, como en video-scout-pipeline. Sin él, una
+    # corrida que encuentra varios videos pendientes los sube todos de golpe:
+    # gasta la cuota diaria de la API de YouTube (cada subida cuesta 1600 de los
+    # 10000 puntos diarios) y publica en ráfaga, que es justo lo que un canal no
+    # quiere. None = sin tope.
+    "max_subidas_por_corrida": 1,
     "duracion_min_video_seg": 240,
     "duracion_max_video_seg": 1200,
     "categoria_youtube": "27",  # Education
@@ -69,7 +78,7 @@ def cargar_config():
     if os.path.exists(RUTA_CONFIG):
         with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
             cfg.update(json.load(f))
-    return cfg
+    return formatos_canal.aplicar_formato(cfg)
 
 
 def cargar_json(ruta, default):
@@ -88,6 +97,19 @@ def guardar_json(ruta, data):
 # ---------------------------------------------------------
 # FASE 1: chequeo técnico
 # ---------------------------------------------------------
+def duracion_video(ruta_video):
+    """Duración real del archivo en segundos, o None si no se pudo medir."""
+    try:
+        res = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "json", ruta_video],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(json.loads(res.stdout)["format"]["duration"])
+    except Exception:
+        return None
+
+
 def chequeo_tecnico(ruta_video, cfg):
     if not os.path.isfile(ruta_video) or os.path.getsize(ruta_video) == 0:
         return False, "Archivo de video inexistente o vacío."
@@ -103,8 +125,11 @@ def chequeo_tecnico(ruta_video, cfg):
         return False, f"ffprobe falló: {exc}"
 
     duracion = float(data.get("format", {}).get("duration", 0))
-    if not (cfg["duracion_min_video_seg"] <= duracion <= cfg["duracion_max_video_seg"]):
-        return False, f"Duración fuera de rango: {duracion:.1f}s"
+    # Los límites salen del formato: revisar contra la ventana del formato
+    # anterior rechazaría todos los shorts por "cortos" (ver formato_video.py).
+    dur_min, dur_max = formato_video.limites_duracion(cfg)
+    if not (dur_min <= duracion <= dur_max):
+        return False, f"Duración fuera de rango: {duracion:.1f}s (esperado {dur_min}-{dur_max}s)"
 
     tipos_stream = {s.get("codec_type") for s in data.get("streams", [])}
     if "audio" not in tipos_stream:
@@ -118,6 +143,10 @@ def chequeo_tecnico(ruta_video, cfg):
 # ---------------------------------------------------------
 # FASE 2: chequeo de contenido + generación de metadata
 # ---------------------------------------------------------
+# Hashtags de respaldo si config.json no trae "hashtags_base". Genéricos del
+# nicho del canal (psicología / desarrollo personal), no dependen del video.
+DEFAULT_HASHTAGS = ["Psicologia", "DesarrolloPersonal", "SaludMental"]
+
 SCHEMA_METADATA = {
     "type": "object",
     "properties": {
@@ -140,6 +169,27 @@ Recibes el título/hook y el guion completo de un video ya renderizado, y debes:
    inapropiado. Contenido reflexivo sobre ansiedad, trauma, etc. SÍ es apto siempre
    que no se presente como consejo médico, es el género del canal.
 2. Si es apto, genera título, descripción y hashtags optimizados para YouTube."""
+
+
+def generar_metadata_plantilla(titulo, cuerpo, cfg):
+    """Metadata de YouTube sin llamar a ningún modelo.
+
+    No hace falta un LLM para esto: el guion ya lo escribimos nosotros (a mano,
+    en guion.semilla.txt, o revisado antes de commitear), así que la
+    aprobación de contenido que hacía Gemini es redundante — no hay texto
+    generado a ciegas que revisar. El título es el hook tal cual (ya pasó por
+    la regla de "pregunta abierta o paradoja" de content_planner), la
+    descripción es el propio guion —es literalmente lo que dice el video, que
+    es una descripción honesta y buena para SEO— y los hashtags salen de
+    config.json en vez de que el modelo los invente cada vez."""
+    aprobado = bool(titulo and cuerpo)
+    return {
+        "aprobado": aprobado,
+        "motivo_rechazo": "" if aprobado else "Falta título o guion.",
+        "titulo_youtube": titulo[:100],
+        "descripcion_youtube": f"{titulo}\n\n{cuerpo.strip()}"[:4900],
+        "hashtags": list(cfg.get("hashtags_base") or DEFAULT_HASHTAGS)[:6],
+    }
 
 
 def revisar_y_generar_metadata(client, modelo, titulo, cuerpo):
@@ -182,7 +232,7 @@ def obtener_servicio_youtube():
     return build("youtube", "v3", credentials=creds)
 
 
-def construir_descripcion(metadata, video):
+def construir_descripcion(metadata, video, cfg=None, duracion_seg=None):
     """Arma la descripción final: lo que genera el modelo + la línea de
     transparencia sobre contenido generado con IA (fija, no depende de que
     el modelo la recuerde) + atribución de música si corresponde."""
@@ -202,7 +252,17 @@ def construir_descripcion(metadata, video):
                 linea_musica += f" — {atribucion['pagina_jamendo']}"
             partes.append(linea_musica)
 
-    partes.append(" ".join(f"#{h}" for h in metadata["hashtags"]))
+    hashtags = list(metadata["hashtags"])
+    # YouTube clasifica un video como Short por su formato y duración, pero el
+    # hashtag ayuda a que lo agrupe bien y es lo que se acostumbra en el nicho.
+    # Manda la duración MEDIDA del archivo, no lo que diga config.json: un video
+    # que apuntaba a 60s y salió de 200 no es un short, y etiquetarlo como tal
+    # solo consigue que YouTube lo muestre donde no corresponde.
+    es_short = (formato_video.es_short_medido(duracion_seg, cfg)
+                if duracion_seg else formato_video.es_short(cfg))
+    if es_short and not any(h.lower() == "shorts" for h in hashtags):
+        hashtags.insert(0, "Shorts")
+    partes.append(" ".join(f"#{h}" for h in hashtags))
     return "\n\n".join(partes)
 
 
@@ -210,7 +270,7 @@ def subir_video(servicio, ruta_video, metadata, video, cfg, publish_at_iso):
     body = {
         "snippet": {
             "title": metadata["titulo_youtube"][:100],
-            "description": construir_descripcion(metadata, video),
+            "description": construir_descripcion(metadata, video, cfg, duracion_video(ruta_video)),
             "tags": metadata["hashtags"],
             "categoryId": cfg["categoria_youtube"],
         },
@@ -259,10 +319,22 @@ def main():
         logger.info("Todos los videos completados ya fueron procesados anteriormente.")
         return
 
-    client = genai.Client()
+    # El cliente de Gemini solo hace falta si motor_metadata pide revisión por
+    # modelo; con "plantillas" (default) esta corrida no toca la API.
+    motor_metadata = cfg.get("motor_metadata", "plantillas")
+    client = genai.Client() if motor_metadata == "gemini" else None
     servicio_yt = None
+    max_subidas = cfg.get("max_subidas_por_corrida")
+    subidas_en_esta_corrida = 0
 
     for video in pendientes:
+        if max_subidas and subidas_en_esta_corrida >= max_subidas:
+            logger.info(
+                f"Tope de {max_subidas} subida(s) por corrida alcanzado — "
+                f"quedan {len(pendientes) - subidas_en_esta_corrida} para la próxima."
+            )
+            break
+
         ruta = video["ruta"]
         logger.info(f"Procesando: {os.path.basename(ruta)}")
 
@@ -274,7 +346,10 @@ def main():
             continue
 
         try:
-            metadata = revisar_y_generar_metadata(client, cfg["modelo_revision"], video["titulo"], video.get("cuerpo", ""))
+            if motor_metadata == "gemini":
+                metadata = revisar_y_generar_metadata(client, cfg["modelo_revision"], video["titulo"], video.get("cuerpo", ""))
+            else:
+                metadata = generar_metadata_plantilla(video["titulo"], video.get("cuerpo", ""), cfg)
         except Exception as exc:
             logger.warning(f"Rechazado (error de revisión): {exc}")
             rechazados.append({"ruta": ruta, "fase": "revision", "motivo": str(exc)})
@@ -301,6 +376,7 @@ def main():
             guardar_json(RUTA_RECHAZADOS, rechazados)
             continue
 
+        subidas_en_esta_corrida += 1
         logger.info(f"✅ Subido como privado, se publica solo el {publish_at_iso} — https://studio.youtube.com/video/{video_id}/edit")
         publicados.append({
             "ruta": ruta,

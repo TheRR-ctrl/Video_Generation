@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import json
+import math
 import shutil
 import random
 import logging
@@ -26,9 +27,15 @@ import tempfile
 from datetime import timedelta
 
 import env_local  # noqa: F401 (carga .env si existe)
+import formatos_canal
 import tts_gemini
+import tts_edge
 import veo_broll
 import manim_broll
+import fondos_stock
+import hyperframes_broll
+import hyperframes_audio_mix
+import formato_video
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
@@ -45,7 +52,12 @@ CONFIG_DEFAULT = {
     "modelo_veo": "veo-3.0-generate-001",
     "modelo_texto": "gemini-3.6-flash",
     "motor_broll": "veo",
+    "motor_tts": "gemini",
+    "voz_masculina_edge": tts_edge.VOZ_FALLBACK_MASCULINA,
+    "voz_femenina_edge": tts_edge.VOZ_FALLBACK_FEMENINA,
     "reintentar_existentes": False,
+    "ducking_hyperframes": True,
+    "fuerza_carve_musica": hyperframes_audio_mix.FUERZA_CARVE_DEFAULT,
 }
 
 RESOLUCIONES = {
@@ -54,10 +66,80 @@ RESOLUCIONES = {
     "1:1": (1080, 1080),
 }
 
+# Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts).
+# Corrido hacia abajo respecto del rango original del pipeline hermano
+# (-8Hz a +4Hz): un pitch más grave se lee como más cálido/cercano, que es lo
+# que pide el género del canal (psicología, reflexión) frente al original,
+# pensado para historias con más urgencia narrativa. Se mantiene angosto para
+# que la voz siga sonando natural, y con cuatro valores para que dos videos
+# seguidos no suenen idénticos.
+TONOS_LOCUCION = ("-10Hz", "-6Hz", "-2Hz", "+2Hz")
 DURACION_INTRO_CARD_SEG = 3.0
+# En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
+# retrasan el hook, que es justo lo que decide si el espectador se queda. El
+# formato corto arranca directo en la primera palabra.
+DURACION_INTRO_CARD_SHORT_SEG = 0.0
+FPS_VIDEO = 30
+
+# Reglas de subtitulado. Agrupar de a N palabras fijas dejaba cada bloque 1.4s
+# en pantalla (medido sobre el video terminado: 43 bloques por minuto) y partía
+# las frases a mitad de camino. Estos tres valores son el criterio de siempre:
+# una línea que entre completa, un piso de tiempo para poder leerla, y un techo
+# para que no se quede pegada.
+CARACTERES_MAX_SUBTITULO = 26
+SEGUNDOS_MIN_SUBTITULO = 1.0
+# Cuánto texto entra en UNA línea, que no es lo mismo que cuánto texto lleva un
+# bloque: el bloque apunta a 26 caracteres (3-5 palabras, como la referencia),
+# pero cuando queda algo más largo —porque partirlo daría un subtítulo de medio
+# segundo— igual entra en una sola línea. Con la Montserrat Black condensada al
+# 88% y cuerpo 64, 40 caracteres ocupan ~1500px de los 1800 disponibles.
+CARACTERES_MAX_LINEA = 40
+# En vertical el cuadro tiene 1080px de ancho en vez de 1920: entra bastante
+# menos texto por línea, y el bloque se acorta en la misma proporción.
+CARACTERES_MAX_SUBTITULO_VERTICAL = 20
+CARACTERES_MAX_LINEA_VERTICAL = 24
+
+
+SEGUNDOS_MAX_SUBTITULO = 6.0
+PUNTUACION_FUERTE = (".", "?", "!", "…", ":")
+PUNTUACION_DEBIL = (",", ";")
+# Adelanto del subtítulo respecto de la voz, copiado de video-scout-pipeline.
+ADELANTO_SUBTITULO = timedelta(seconds=0.32)
+# Estilo del subtítulo, calcado del video de referencia que pasó el usuario
+# (docs/referencia-subtitulos.jpg): la frase en blanco con contorno negro
+# grueso, y la palabra que se está diciendo más grande. Además, las palabras con
+# peso propio se encienden en color, rotando por una paleta fija.
+COLOR_BASE = "&H00FFFFFF&"
+# Los cuatro acentos, medidos sobre los píxeles del video de referencia y
+# pasados a formato ASS (&HBBGGRR): verde (48,200,128), cian (56,200,224),
+# amarillo (245,220,70) y rojo (245,110,100). Rotan en ese orden.
+PALETA_RESALTADO = ("&H0080C830&", "&H00E0C838&", "&H0046DCF5&", "&H00646EF5&")
+# Solo las palabras de este largo para arriba reciben color; las cortas —de, la,
+# mi, un— solo crecen y siguen en blanco. La regla sale de mirar la referencia
+# cuadro a cuadro: HERMANITOS, ESTABAN, DORMIDOS y PUERTA van en color, mientras
+# que BIEN, MAMÁ, TOCÓ, MI y DE se quedan en blanco.
+LARGO_MIN_PALABRA_COLOREADA = 5
+# Tipografía condensada: la referencia usa una itálica pesada y angosta. No hay
+# una así en los repos de Ubuntu (Anton, Oswald), así que se consigue el mismo
+# efecto estrechando Montserrat Black, que ya se instala en el workflow.
+ESCALA_BASE_X = 88
+FACTOR_RESALTADO = 1.35
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("video_maestro")
+
+
+def configurar_ancho_subtitulos(w, h):
+    """Fija los dos límites de ancho del subtítulo según el formato del video.
+
+    Son globales del módulo y no parámetros porque los usa toda la cadena de
+    agrupado (el corte de bloque, el partido de cues largos y el salto de línea),
+    y enhebrarlos por cinco funciones para un valor que no cambia dentro de una
+    corrida ensucia más de lo que aclara. Se llama una vez, al empezar el video."""
+    global CARACTERES_MAX_SUBTITULO, CARACTERES_MAX_LINEA
+    if h > w:
+        CARACTERES_MAX_SUBTITULO = CARACTERES_MAX_SUBTITULO_VERTICAL
+        CARACTERES_MAX_LINEA = CARACTERES_MAX_LINEA_VERTICAL
 
 
 def cargar_config():
@@ -68,7 +150,7 @@ def cargar_config():
                 cfg.update(json.load(f))
         except Exception as exc:
             logger.warning(f"No se pudo leer {RUTA_CONFIG}, usando valores por defecto: {exc}")
-    return cfg
+    return formatos_canal.aplicar_formato(cfg)
 
 
 # ---------------------------------------------------------
@@ -186,38 +268,197 @@ def crear_tarjeta_intro(titulo, output_png, ancho, alto):
 # SUBTÍTULOS KARAOKE (SRT -> ASS)
 # ---------------------------------------------------------
 def formatear_srt_time(segundos):
-    segundos = max(0.0, segundos)
-    horas = int(segundos // 3600)
-    minutos = int((segundos % 3600) // 60)
-    segs = int(segundos % 60)
-    ms = int(round((segundos - int(segundos)) * 1000))
+    """Formatea segundos como HH:MM:SS,mmm.
+
+    Se redondea a milisegundos ENTEROS antes de partir el valor. Redondear
+    después, sobre la parte decimal sola, desbordaba: 3.9996 daba "00:00:03,1000"
+    —cuatro dígitos de milisegundo, un timestamp inválido— y al releerlo daba
+    3.1s, casi un segundo hacia atrás. En el video eso se veía como subtítulos
+    que aparecían un instante y desaparecían, o que se adelantaban a la voz."""
+    total_ms = max(0, int(round(segundos * 1000)))
+    horas, resto = divmod(total_ms, 3600_000)
+    minutos, resto = divmod(resto, 60_000)
+    segs, ms = divmod(resto, 1000)
     return f"{horas:02d}:{minutos:02d}:{segs:02d},{ms:03d}"
 
 
-def generar_bloques_srt_escena(texto, duracion_seg, offset_seg, indice_inicial, palabras_por_grupo=5):
-    """No hay marcas de tiempo por palabra (Gemini TTS no las da, a
-    diferencia de edge-tts), así que se distribuye el tiempo de cada grupo
-    de palabras proporcionalmente a su longitud dentro de la duración
-    medida del audio de la escena."""
+def _cierra_bloque(texto_acumulado, texto_siguiente, duracion):
+    """Decide si el bloque acumulado se cierra antes de sumar la palabra
+    siguiente. El orden de las reglas es el que hace que los cortes caigan
+    donde caen las pausas al hablar."""
+    chars = len(texto_acumulado)
+    if chars + 1 + len(texto_siguiente) > CARACTERES_MAX_SUBTITULO:
+        return True  # no entra en una línea legible
+    if duracion >= SEGUNDOS_MAX_SUBTITULO:
+        return True  # ya lleva demasiado en pantalla
+    if duracion < SEGUNDOS_MIN_SUBTITULO:
+        return False  # nunca cortes antes del mínimo legible
+    if texto_acumulado.endswith(PUNTUACION_FUERTE):
+        return True  # fin de oración: el corte natural
+    if texto_acumulado.endswith(PUNTUACION_DEBIL) and chars >= CARACTERES_MAX_SUBTITULO * 0.6:
+        return True  # coma o punto y coma con el bloque ya bien lleno
+    return False
+
+
+def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial):
+    """Reusa el SRT que edge-tts escribió para esta escena (marcas de tiempo
+    reales por palabra) desplazándolo al lugar que ocupa la escena dentro del
+    video completo.
+
+    Es la diferencia entre un karaoke que sigue a la voz y uno que va a la
+    deriva: la alternativa (generar_bloques_srt_escena) reparte el tiempo por
+    cantidad de caracteres, lo que se desfasa apenas la locución cambia de
+    ritmo. Devuelve ([], indice_inicial) si el SRT no existe o viene vacío, para
+    que el llamador pueda caer a la estimación sin romperse."""
+    if not archivo_valido(ruta_srt):
+        return [], indice_inicial
+
+    with open(ruta_srt, "r", encoding="utf-8") as f:
+        contenido = f.read()
+
+    bloques = re.findall(
+        r"\d+\s*\n(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*\n(.*?)(?=\n\s*\n|\Z)",
+        contenido, re.DOTALL,
+    )
+    if not bloques:
+        return [], indice_inicial
+
+    cues = []
+    for t_ini_str, t_fin_str, texto in bloques:
+        texto = " ".join(texto.split())
+        if not texto:
+            continue
+        t_ini = parse_time(t_ini_str).total_seconds() + offset_seg
+        t_fin = parse_time(t_fin_str).total_seconds() + offset_seg
+        if t_fin > t_ini:
+            cues.append((t_ini, t_fin, texto))
+
+    return _agrupar_cues_en_bloques(cues, indice_inicial)
+
+
+def _partir_cue_largo(t_ini, t_fin, texto):
+    """Parte en varios un cue que no entra en pantalla, repartiendo su tiempo
+    proporcionalmente a los caracteres de cada parte.
+
+    Hace falta porque edge-tts no siempre corta por palabra: según la versión
+    devuelve un cue por FRASE, y una frase entera ocupa el ancho completo del
+    cuadro. Agrupar solo sabe unir cues cortos; sin esto, uno largo pasa de
+    largo tal cual."""
+    palabras = texto.split()
+    duracion = t_fin - t_ini
+    if len(texto) <= CARACTERES_MAX_SUBTITULO or len(palabras) < 2:
+        return [(t_ini, t_fin, texto)]
+
+    # Cuántas partes: las que pida el ancho, salvo que el tiempo no alcance para
+    # que cada una se lea. Si no alcanza, se admiten dos líneas por parte antes
+    # que partes que parpadeen.
+    por_ancho = math.ceil(len(texto) / CARACTERES_MAX_SUBTITULO)
+    por_tiempo = max(1, int(duracion // SEGUNDOS_MIN_SUBTITULO))
+    minimo = math.ceil(len(texto) / (CARACTERES_MAX_SUBTITULO * 2))
+    partes_n = max(minimo, min(por_ancho, por_tiempo))
+    if partes_n < 2:
+        return [(t_ini, t_fin, texto)]
+
+    objetivo = len(texto) / partes_n
+    grupos, actual, ancho = [], [], 0
+    for palabra in palabras:
+        actual.append(palabra)
+        ancho += len(palabra) + 1
+        corta_aqui = ancho >= objetivo and len(grupos) < partes_n - 1
+        # Si la palabra cierra una frase, cortar acá aunque falte poco para el
+        # objetivo: el corte cae en la pausa real.
+        if corta_aqui or (palabra.endswith(PUNTUACION_FUERTE + PUNTUACION_DEBIL)
+                          and ancho >= objetivo * 0.7 and len(grupos) < partes_n - 1):
+            grupos.append(actual)
+            actual, ancho = [], 0
+    if actual:
+        grupos.append(actual)
+
+    textos = [" ".join(g) for g in grupos]
+    total = sum(len(t) for t in textos) or 1
+    salida, t = [], t_ini
+    for i, txt in enumerate(textos):
+        dur = duracion * len(txt) / total
+        fin = t_fin if i == len(textos) - 1 else t + dur
+        salida.append((t, fin, txt))
+        t = fin
+    return salida
+
+
+def _agrupar_cues_en_bloques(cues, indice_inicial):
+    """Agrupa los cues palabra a palabra de edge-tts en bloques legibles.
+
+    Agrupar de a N palabras fijas (lo que se hacía antes) deja el subtítulo
+    1.4s en pantalla y parte las frases donde toque: "QUE HAS ESTADO
+    APLAZANDO", "DE HACERLO TODO PERFECTO,". Acá el corte lo deciden la
+    puntuación, el ancho de línea y un piso de tiempo, que es el criterio de
+    subtitulado de siempre: cortar donde el que habla hace la pausa."""
+    # Primero se parte lo que no entra en pantalla; recién después se agrupa lo
+    # que quedó corto. edge-tts entrega cues por palabra o por frase entera
+    # según la versión, así que hacen falta las dos pasadas.
+    partidos = []
+    for cue in cues:
+        partidos.extend(_partir_cue_largo(*cue))
+
+    grupos = []
+    acumulado = []
+    for t_ini, t_fin, texto in partidos:
+        if acumulado:
+            texto_actual = " ".join(t for _, _, t in acumulado)
+            duracion = acumulado[-1][1] - acumulado[0][0]
+            if _cierra_bloque(texto_actual, texto, duracion):
+                grupos.append(acumulado)
+                acumulado = []
+        acumulado.append((t_ini, t_fin, texto))
+    if acumulado:
+        grupos.append(acumulado)
+
+    # El último bloque de la escena puede quedar por debajo del mínimo: se cerró
+    # porque se acabó el texto, no porque tocara cortar. Se funde con el
+    # anterior; acá sí se admiten dos líneas (el conversor a ASS las parte),
+    # porque un bloque de dos líneas se lee sin problema y uno de medio segundo
+    # en pantalla no.
+    if len(grupos) >= 2:
+        ultimo, previo = grupos[-1], grupos[-2]
+        dur_ultimo = ultimo[-1][1] - ultimo[0][0]
+        chars = sum(len(t) + 1 for _, _, t in previo + ultimo)
+        if dur_ultimo < SEGUNDOS_MIN_SUBTITULO and chars <= CARACTERES_MAX_SUBTITULO * 2:
+            grupos[-2:] = [previo + ultimo]
+
+    lineas = []
+    idx = indice_inicial
+    for grupo in grupos:
+        lineas.append(_bloque_srt(grupo, idx))
+        idx += 1
+    return lineas, idx
+
+
+def _bloque_srt(cues, indice):
+    t_ini = cues[0][0]
+    t_fin = cues[-1][1]
+    texto = " ".join(t for _, _, t in cues)
+    return f"{indice}\n{formatear_srt_time(t_ini)} --> {formatear_srt_time(t_fin)}\n{texto}\n"
+
+
+def generar_bloques_srt_escena(texto, duracion_seg, offset_seg, indice_inicial):
+    """Fallback para motores de TTS que no devuelven marcas de tiempo por
+    palabra (Gemini TTS): reparte la duración medida del audio entre las
+    palabras, proporcionalmente a su longitud, y agrupa con el mismo criterio de
+    frase que la ruta buena — así el corte de línea es igual de legible aunque
+    la sincronía sea estimada."""
     palabras = texto.split()
     if not palabras or duracion_seg <= 0:
         return [], indice_inicial
 
-    grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
-    textos_grupo = [" ".join(g) for g in grupos]
-    total_chars = sum(len(t) for t in textos_grupo) or 1
-
-    lineas = []
+    total_chars = sum(len(p) for p in palabras) or 1
+    cues = []
     t_acum = 0.0
-    idx = indice_inicial
-    for texto_g in textos_grupo:
-        dur_g = duracion_seg * (len(texto_g) / total_chars)
-        t_ini = offset_seg + t_acum
-        t_fin = offset_seg + t_acum + dur_g
-        lineas.append(f"{idx}\n{formatear_srt_time(t_ini)} --> {formatear_srt_time(t_fin)}\n{texto_g}\n")
-        t_acum += dur_g
-        idx += 1
-    return lineas, idx
+    for palabra in palabras:
+        dur = duracion_seg * (len(palabra) / total_chars)
+        cues.append((offset_seg + t_acum, offset_seg + t_acum + dur, palabra))
+        t_acum += dur
+
+    return _agrupar_cues_en_bloques(cues, indice_inicial)
 
 
 def parse_time(time_str):
@@ -231,15 +472,109 @@ def format_ass_time(td):
     return f"{ts // 3600}:{(ts % 3600) // 60:02d}:{ts % 60:02d}.{int(td.microseconds / 10000):02d}"
 
 
+def _corte_dos_lineas(palabras):
+    """Índice donde partir el bloque en dos líneas, o None si entra en una.
+
+    Se parte por la mitad en vez de llenar la primera línea hasta el tope:
+    llenando, la última palabra cae sola abajo ("...EL TRABAJO EN / SÍ.") y se
+    lee peor que dos líneas parejas."""
+    texto = " ".join(palabras)
+    if len(texto) <= CARACTERES_MAX_LINEA:
+        return None
+
+    mitad = len(texto) / 2
+    mejor, mejor_dist = None, None
+    ancho = 0
+    for j in range(1, len(palabras)):
+        ancho += len(palabras[j - 1]) + 1
+        dist = abs(ancho - mitad)
+        if mejor_dist is None or dist < mejor_dist:
+            mejor, mejor_dist = j, dist
+    return mejor
+
+
+def _tiempos_por_palabra(palabras, t_inicio, t_fin):
+    """Reparte la duración del bloque entre sus palabras, proporcional a los
+    caracteres de cada una: las palabras largas se pronuncian más lento."""
+    total = sum(len(p) for p in palabras) or 1
+    duracion = (t_fin - t_inicio).total_seconds()
+    tiempos, t = [], t_inicio
+    for i, palabra in enumerate(palabras):
+        fin = t_fin if i == len(palabras) - 1 else t + timedelta(seconds=duracion * len(palabra) / total)
+        tiempos.append((t, fin))
+        t = fin
+    return tiempos
+
+
+def _color_resaltado(palabra, contador_color):
+    """Color de acento para la palabra resaltada, o None si va en blanco.
+
+    Devuelve también el contador actualizado: la paleta rota entre palabras
+    coloreadas a lo largo de todo el video, no dentro de cada bloque, que es
+    como se comporta en la referencia."""
+    if len(palabra.strip(".,;:¿?¡!—…\"'()")) < LARGO_MIN_PALABRA_COLOREADA:
+        return None, contador_color
+    return PALETA_RESALTADO[contador_color % len(PALETA_RESALTADO)], contador_color + 1
+
+
+def _linea_resaltada(palabras, indice_resaltada, corte, color=None):
+    """La frase completa, con una sola palabra resaltada en color y tamaño.
+
+    Se emite la frase entera en cada línea de diálogo —no solo la palabra de
+    turno— para que el espectador lea el contexto y no palabras sueltas. El
+    resaltado marca dónde va la voz."""
+    partes = []
+    for j, palabra in enumerate(palabras):
+        if j == corte:
+            partes.append("\\N")
+        if j == indice_resaltada:
+            abre = (
+                f"\\fscx{round(ESCALA_BASE_X * FACTOR_RESALTADO)}"
+                f"\\fscy{round(100 * FACTOR_RESALTADO)}"
+            )
+            cierra = f"\\fscx{ESCALA_BASE_X}\\fscy100"
+            if color:
+                abre += f"\\c{color}"
+                cierra += f"\\c{COLOR_BASE}"
+            partes.append(f"{{{abre}}}{palabra.upper()}{{{cierra}}} ")
+        else:
+            partes.append(f"{palabra.upper()} ")
+    return "".join(partes).replace(" \\N", "\\N").strip()
+
+
 def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
-    font_size, palabras_por_grupo = (58, 2)
+    """Escribe el ASS de los subtítulos: la frase completa en pantalla, con la
+    palabra que se está diciendo resaltada en color y tamaño.
+
+    Del pipeline hermano video-scout-pipeline se conservan la tipografía
+    (Montserrat Black), el contorno negro grueso, la sombra y el adelanto de
+    0.32s respecto de la voz. Lo que cambia es la unidad: allá se muestran dos
+    palabras por vez y la frase nunca se ve entera; acá se muestra la frase
+    completa y el resaltado indica por dónde va la locución, que es lo que deja
+    leer el contexto en vez de palabras sueltas.
+
+    El subtítulo se ancla abajo (Alignment 2), no centrado como allá: acá el
+    fondo son diagramas rotulados que dicen algo, y el prompt de HyperFrames ya
+    les reserva la franja inferior."""
+    es_vertical = h > w
+    font_size = 72 if es_vertical else 64
+    # En vertical el subtítulo no va abajo del todo: el último 30% lo tapa la
+    # interfaz de Shorts y de TikTok con el título, el usuario y los botones.
+    # Queda justo encima de esa franja (ocupa ~61-70% del alto), con el diagrama
+    # arriba. Se ancla abajo con un margen grande en vez de usar el anclaje al
+    # medio, porque libass ignora MarginV con ese anclaje. En horizontal sigue
+    # abajo, donde el diagrama le deja lugar.
+    margen_inferior = int(h * 0.29) if es_vertical else 60
     header = (
         f"[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n\n"
         f"[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         f"BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
         f"Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Karaoke,Montserrat Black,{font_size},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H80000000&,1,0,0,0,"
-        f"100,100,0,0,1,6,2,2,80,80,80,0\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
+        # Bold=1 e Italic=1, ScaleX condensado: la itálica pesada y angosta de
+        # la referencia. Contorno 6 y sombra 2, que es lo que la hace legible
+        # sobre cualquier fondo.
+        f"Style: Karaoke,Montserrat Black,{font_size},{COLOR_BASE},{COLOR_BASE},&H00000000&,&H80000000&,1,1,0,0,"
+        f"{ESCALA_BASE_X},100,0,0,1,6,2,2,60,60,{margen_inferior},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, "
         f"MarginR, MarginV, Effect, Text\n"
     )
 
@@ -255,29 +590,30 @@ def convertir_srt_a_karaoke_ass(srt_in_path, ass_out_path, w, h):
         contenido, re.DOTALL,
     )
     lineas_ass = [header]
+    contador_color = 0
 
     for _, t_inicio_str, t_fin_str, texto in bloques:
         palabras = texto.strip().replace('\n', ' ').split()
         if not palabras:
             continue
 
-        t_inicio = parse_time(t_inicio_str)
-        t_fin = parse_time(t_fin_str)
-        dur_cs = int((t_fin - t_inicio).total_seconds() * 100)
-        if dur_cs <= 0:
+        # Adelanto de 0.32s, igual que en el pipeline hermano: el subtítulo
+        # entra un instante antes que la sílaba, que es como se lee sin sentir
+        # que va atrasado. Nunca antes del inicio del video.
+        t_inicio = max(timedelta(0), parse_time(t_inicio_str) - ADELANTO_SUBTITULO)
+        t_fin = max(timedelta(0), parse_time(t_fin_str) - ADELANTO_SUBTITULO)
+        if (t_fin - t_inicio).total_seconds() <= 0:
             continue
 
-        grupos = [palabras[i:i + palabras_por_grupo] for i in range(0, len(palabras), palabras_por_grupo)]
-        dur_grp = dur_cs // max(1, len(grupos))
-
-        t_act = t_inicio
-        for grupo in grupos:
-            t_sig = t_act + timedelta(seconds=dur_grp / 100.0)
-            texto_karaoke = "".join([f"{{\\k{max(6, dur_grp // len(grupo))}}}{p.upper()} " for p in grupo])
+        corte = _corte_dos_lineas(palabras)
+        for i, (t_ini_p, t_fin_p) in enumerate(_tiempos_por_palabra(palabras, t_inicio, t_fin)):
+            if (t_fin_p - t_ini_p).total_seconds() <= 0:
+                continue
+            color, contador_color = _color_resaltado(palabras[i], contador_color)
             lineas_ass.append(
-                f"Dialogue: 0,{format_ass_time(t_act)},{format_ass_time(t_sig)},Karaoke,,0,0,0,,{texto_karaoke.strip()}\n"
+                f"Dialogue: 0,{format_ass_time(t_ini_p)},{format_ass_time(t_fin_p)},Karaoke,,0,0,0,,"
+                f"{_linea_resaltada(palabras, i, corte, color)}\n"
             )
-            t_act = t_sig
 
     with open(ass_out_path, 'w', encoding='utf-8') as f:
         f.writelines(lineas_ass)
@@ -314,6 +650,51 @@ def seleccionar_musica_fondo(tono):
 # ---------------------------------------------------------
 # PARSEO DEL GUION
 # ---------------------------------------------------------
+def armar_video_escena(clips_base, dur_escena, w, h, ruta_salida, gestor, num_escena):
+    """Monta el video de una escena repartiendo su duración entre los planos.
+
+    La narración de la escena sigue de corrido; lo que cambia es la imagen, cada
+    `dur_escena / n` segundos. Con un solo plano el resultado es el de siempre:
+    ese clip en bucle hasta cubrir la narración."""
+    filtro = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS_VIDEO}"
+
+    # El reparto se hace en FOTOGRAMAS, no en segundos. Cortando por tiempo,
+    # ffmpeg redondea cada tramo al fotograma más cercano y con varios planos por
+    # escena esos redondeos se suman: el video queda unas décimas más corto que
+    # su narración, y el desfase se acumula escena a escena hasta que la imagen
+    # va notoriamente atrasada respecto de la voz al final del video.
+    total_frames = max(1, round(dur_escena * FPS_VIDEO))
+    por_plano, sobrante = divmod(total_frames, len(clips_base))
+    frames = [por_plano + (1 if j < sobrante else 0) for j in range(len(clips_base))]
+
+    tramos = []
+    for j, (clip, n_frames) in enumerate(zip(clips_base, frames), 1):
+        if n_frames <= 0:
+            continue
+        tramo = gestor.registrar(f"escena_{num_escena}_plano_{j}.mp4")
+        ejecutar_comando(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-stream_loop", "-1", "-i", clip, "-vf", filtro, "-frames:v", str(n_frames),
+             "-an", "-c:v", "libx264", "-preset", "ultrafast", tramo],
+            f"FFmpeg: plano {j} de la escena {num_escena}",
+        )
+        tramos.append(tramo)
+
+    if len(tramos) == 1:
+        shutil.copyfile(tramos[0], ruta_salida)
+        return
+
+    lista = gestor.registrar(f"escena_{num_escena}_planos.txt")
+    with open(lista, "w", encoding="utf-8") as f:
+        for tramo in tramos:
+            f.write(f"file '{os.path.abspath(tramo)}'\n")
+    ejecutar_comando(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+         "-i", lista, "-c", "copy", ruta_salida],
+        f"FFmpeg: unión de los planos de la escena {num_escena}",
+    )
+
+
 def parsear_bloque_guion(bloque):
     dia = int(re.search(r'#\s*Dia:\s*(\d+)', bloque).group(1))
     tema = re.search(r'#\s*Tema:\s*(.+)', bloque).group(1).strip()
@@ -328,8 +709,16 @@ def parsear_bloque_guion(bloque):
         m_texto = re.search(r'TEXTO:\s*(.+)', trozo, re.DOTALL)
         if not (m_visual and m_texto):
             continue
+        # Una escena puede traer varias líneas VISUAL:, una por plano. Es lo que
+        # permite que la imagen cambie cada pocos segundos en vez de quedarse
+        # fija los 15-25s que dura la narración. Los guiones viejos traen una
+        # sola y siguen funcionando: quedan como una escena de un plano.
+        planos = [
+            p.strip() for p in re.split(r'\n\s*VISUAL:\s*', m_visual.group(1).strip()) if p.strip()
+        ]
         escenas.append({
-            "visual": m_visual.group(1).strip(),
+            "planos": planos,
+            "visual": planos[0],
             "texto": m_texto.group(1).strip(),
         })
 
@@ -357,8 +746,50 @@ def renderizar_una_historia(bloque, cfg, num=1):
 
         print(f"\n🎬 [Día {info['dia']}] {info['hook']}  ({len(info['escenas'])} escena(s))")
 
-        w, h = RESOLUCIONES.get(cfg["aspecto_video"], RESOLUCIONES["16:9"])
-        voz = cfg["voz_femenina"] if cfg.get("genero_narrador") == "femenino" else cfg["voz_masculina"]
+        # La perspectiva sale del formato, no de un ajuste aparte que puede
+        # haber quedado del formato anterior (ver formato_video.py).
+        aspecto = formato_video.aspecto_de(cfg)
+        w, h = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+        configurar_ancho_subtitulos(w, h)
+        motor_tts = cfg.get("motor_tts", "gemini")
+        es_fem = cfg.get("genero_narrador") == "femenino"
+        if motor_tts == "edge":
+            voz = cfg.get("voz_femenina_edge" if es_fem else "voz_masculina_edge") or (
+                tts_edge.VOZ_FALLBACK_FEMENINA if es_fem else tts_edge.VOZ_FALLBACK_MASCULINA
+            )
+            ext_audio = "mp3"
+        else:
+            voz = cfg["voz_femenina"] if es_fem else cfg["voz_masculina"]
+            ext_audio = "wav"
+
+        # Tono de la locución, sorteado una vez por video dentro de un rango
+        # estrecho. Es lo que hace el pipeline hermano y el motivo es de canal,
+        # no de escena: con el tono fijo todos los videos suenan a la misma voz
+        # robótica leyendo, y en un feed eso se nota. La semilla es el título,
+        # así que el mismo video siempre suena igual entre corridas.
+        tono_locucion = random.Random(info["hook"]).choice(TONOS_LOCUCION)
+
+        # Cómo se escribe el HTML de cada composición: "plantillas" (por
+        # defecto, sin API) o "gemini". Se fija por corrida, no por escena.
+        hyperframes_broll.configurar_motor_composicion(
+            cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
+        )
+        motor = cfg.get("motor_broll", "veo")
+        rutas_broll_lote = None
+        if motor == "hyperframes":
+            # Se piden todos los planos de todas las escenas de una sola vez: el
+            # lote es lo que hace viable la cuota de Gemini, y con varios planos
+            # por escena hay bastantes más pedidos que antes.
+            prompts_visuales = [p for e in info["escenas"] for p in e["planos"]]
+            print(f" ├─ 🎞️ Generando {len(prompts_visuales)} plano(s) de apoyo en lotes (hyperframes)...")
+            rutas_broll_lote = hyperframes_broll.generar_clips_lote_cacheados(
+                prompts_visuales, aspecto=aspecto, modelo=cfg["modelo_texto"],
+                tam_lote=cfg.get("tam_lote_hyperframes", hyperframes_broll.TAM_LOTE_DEFAULT),
+                # Cuántos planos trae cada escena: los de una misma escena se
+                # piden juntos y con continuidad (misma maqueta, misma paleta,
+                # mismas etiquetas) en vez de salir como dibujos sueltos.
+                tamanos_escena=[len(e["planos"]) for e in info["escenas"]],
+            )
 
         clips_video = []
         rutas_audio = []
@@ -366,41 +797,70 @@ def renderizar_una_historia(bloque, cfg, num=1):
         idx_srt = 1
         t_acum = 0.0
         texto_completo = []
+        base_plano = 0  # posición de la escena dentro de rutas_broll_lote, que es plana
 
         for i, escena in enumerate(info["escenas"], 1):
-            print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución...")
-            ruta_audio = gestor.registrar(f"escena_{i}_audio.wav")
-            if not tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"]):
+            print(f" ├─ 🎙️ Escena {i}/{len(info['escenas'])}: locución ({motor_tts})...")
+            ruta_audio = gestor.registrar(f"escena_{i}_audio.{ext_audio}")
+            ruta_srt_escena = None
+            if motor_tts == "edge":
+                ruta_srt_escena = gestor.registrar(f"escena_{i}_subtitulos.srt")
+                audio_ok = tts_edge.generar_audio(
+                    escena["texto"], voz, ruta_audio, ruta_srt_salida=ruta_srt_escena,
+                    velocidad=cfg.get("velocidad_locucion", tts_edge.VELOCIDAD_DEFAULT),
+                    tono=tono_locucion,
+                )
+            else:
+                audio_ok = tts_gemini.generar_audio(escena["texto"], voz, ruta_audio, modelo=cfg["modelo_tts"])
+            if not audio_ok:
                 raise RuntimeError(f"No se pudo generar la locución de la escena {i}.")
             dur_escena = medir_duracion_media(ruta_audio)
             if dur_escena <= 0:
                 raise RuntimeError(f"Duración inválida en el audio de la escena {i}.")
 
-            motor = cfg.get("motor_broll", "veo")
-            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: video de apoyo ({motor})...")
+            print(f" ├─ 🎞️ Escena {i}/{len(info['escenas'])}: {len(escena['planos'])} plano(s) de apoyo ({motor})...")
             if motor == "manim":
-                ruta_clip_base = manim_broll.generar_clip_cacheado(
-                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_texto"]
-                )
+                clips_base = [
+                    manim_broll.generar_clip_cacheado(
+                        plano, aspecto=aspecto, modelo=cfg["modelo_texto"]
+                    )
+                    for plano in escena["planos"]
+                ]
+            elif motor == "hyperframes":
+                clips_base = rutas_broll_lote[base_plano:base_plano + len(escena["planos"])]
+            elif motor == "fotos":
+                # Formato emocional/poético: cada VISUAL: es directamente la
+                # consulta de búsqueda en Pexels, no un [arquetipo]. Una foto
+                # por plano, con Ken Burns aplicado en fondos_stock.
+                clips_base = [
+                    fondos_stock.generar_clip_cacheado(
+                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
+                    )
+                    for plano in escena["planos"]
+                ]
             else:
-                ruta_clip_base = veo_broll.generar_clip_cacheado(
-                    escena["visual"], aspecto=cfg["aspecto_video"], modelo=cfg["modelo_veo"]
-                )
-            if not ruta_clip_base:
+                clips_base = [
+                    veo_broll.generar_clip_cacheado(
+                        plano, aspecto=aspecto, modelo=cfg["modelo_veo"]
+                    )
+                    for plano in escena["planos"]
+                ]
+            base_plano += len(escena["planos"])
+
+            clips_base = [c for c in clips_base if c]
+            if not clips_base:
                 raise RuntimeError(f"No se pudo generar el video de apoyo de la escena {i}.")
 
             ruta_clip_escena = gestor.registrar(f"escena_{i}_video.mp4")
-            filtro = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30"
-            ejecutar_comando(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-stream_loop", "-1", "-i", ruta_clip_base, "-t", f"{dur_escena:.2f}",
-                 "-vf", filtro, "-an", "-c:v", "libx264", "-preset", "ultrafast", ruta_clip_escena],
-                f"FFmpeg: ajuste de duración de escena {i}",
-            )
+            armar_video_escena(clips_base, dur_escena, w, h, ruta_clip_escena, gestor, i)
             if not archivo_valido(ruta_clip_escena):
                 raise RuntimeError(f"El clip ajustado de la escena {i} no es válido.")
 
-            lineas, idx_srt = generar_bloques_srt_escena(escena["texto"], dur_escena, t_acum, idx_srt)
+            lineas = []
+            if ruta_srt_escena:
+                lineas, idx_srt = leer_bloques_srt_escena(ruta_srt_escena, t_acum, idx_srt)
+            if not lineas:
+                lineas, idx_srt = generar_bloques_srt_escena(escena["texto"], dur_escena, t_acum, idx_srt)
             lineas_srt.extend(lineas)
 
             clips_video.append(ruta_clip_escena)
@@ -446,12 +906,48 @@ def renderizar_una_historia(bloque, cfg, num=1):
         musica = seleccionar_musica_fondo(tono)
         print(f" ├─ 🎼 Tono: {tono.upper()} | Música: {os.path.basename(musica) if musica else 'ninguna'}")
 
+        # Mezcla con ducking nativo de HyperFrames (voiceover carve): recorta
+        # solo las bandas de frecuencia que ocupa la voz en vez de bajar el
+        # volumen fijo de toda la música (mezcla estática de siempre, que
+        # queda como fallback si el carve falla o está desactivado).
+        audio_final = audio_narracion
+        usar_musica_estatica = bool(musica)
+        if musica and cfg.get("ducking_hyperframes", True):
+            fade_inicio = max(0.0, dur_total - 2.0)
+            musica_looped = gestor.registrar(f"musica_looped{os.path.splitext(musica)[1] or '.mp3'}")
+            ejecutar_comando(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-stream_loop", "-1", "-i", musica, "-t", f"{dur_total:.3f}",
+                 "-af", f"afade=t=out:st={fade_inicio:.2f}:d=2",
+                 "-c:a", "aac", "-b:a", "192k", musica_looped],
+                "FFmpeg: preparar música de fondo (loop + fade)",
+            )
+            audio_mezclado = gestor.registrar("audio_mezclado.m4a")
+            print(" ├─ 🎚️ Mezclando narración + música (ducking nativo de HyperFrames)...")
+            if hyperframes_audio_mix.mezclar_narracion_musica(
+                audio_narracion, musica_looped, dur_total, audio_mezclado,
+                fuerza=cfg.get("fuerza_carve_musica", hyperframes_audio_mix.FUERZA_CARVE_DEFAULT),
+            ):
+                audio_final = audio_mezclado
+                usar_musica_estatica = False
+            else:
+                print(" ├─ ⚠️ Ducking nativo falló, se usa mezcla estática de música.")
+
         f_ass = ass_karaoke.replace('\\', '\\\\').replace(':', '\\:')
-        if musica:
+        dur_tarjeta = (
+            DURACION_INTRO_CARD_SHORT_SEG if formato_video.es_short(cfg)
+            else DURACION_INTRO_CARD_SEG
+        )
+        # Con la tarjeta en 0 se saca el overlay del filtro entero: dejarlo con
+        # enable='between(t,0,0)' haría decodificar la imagen para nada.
+        pre_ass = (
+            f"[0:v][2:v]overlay=0:0:enable='between(t,0,{dur_tarjeta})'[bgc];[bgc]"
+            if dur_tarjeta > 0 else "[0:v]"
+        )
+        if usar_musica_estatica:
             fade_inicio = max(0.0, dur_total - 2.0)
             fc = (
-                f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
-                f"[bgc]ass='{f_ass}'[vout];"
+                f"{pre_ass}ass='{f_ass}'[vout];"
                 f"[1:a]volume=1.0[av];[3:a]volume=0.08,afade=t=out:st={fade_inicio:.2f}:d=2[am];"
                 f"[av][am]amix=inputs=2:duration=first[aout]"
             )
@@ -459,11 +955,8 @@ def renderizar_una_historia(bloque, cfg, num=1):
                       "-i", img_tarjeta, "-stream_loop", "-1", "-i", musica,
                       "-filter_complex", fc, "-map", "[vout]", "-map", "[aout]"]
         else:
-            fc = (
-                f"[0:v][2:v]overlay=0:0:enable='between(t,0,{DURACION_INTRO_CARD_SEG})'[bgc];"
-                f"[bgc]ass='{f_ass}'[vout]"
-            )
-            cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_narracion,
+            fc = f"{pre_ass}ass='{f_ass}'[vout]"
+            cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_final,
                       "-i", img_tarjeta, "-filter_complex", fc, "-map", "[vout]", "-map", "1:a:0"]
 
         flags_audio = ["-map_metadata", "-1", "-c:a", "aac", "-b:a", "192k", "-shortest"]
@@ -507,14 +1000,17 @@ def renderizar_lote_historias(archivo="guion.txt"):
 
     if not os.path.exists(archivo):
         print(f"❌ Error: No se encontró '{archivo}'.")
-        return
+        # Sin el raise, pipeline.py reporta esta etapa como OK aunque no
+        # haya nada que renderizar (típicamente porque la etapa de guion
+        # falló antes y esta corrida no tiene con qué trabajar).
+        raise RuntimeError(f"No se encontró '{archivo}'.")
 
     with open(archivo, 'r', encoding='utf-8') as f:
         bloques = [h.strip() for h in f.read().split("===NUEVA_HISTORIA===") if h.strip()]
 
     if not bloques:
         print("❌ No se detectaron días de guion.")
-        return
+        raise RuntimeError(f"'{archivo}' no tiene días de guion detectables.")
 
     print(f"📦 Total de días en el guion: {len(bloques)}")
     fallidos = []

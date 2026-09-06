@@ -13,6 +13,8 @@ name: Pipeline de contenido
 # Requisitos antes de lanzarlo (ver README.md):
 #   1. Secrets del repo (Settings -> Secrets and variables -> Actions):
 #        GEMINI_API_KEY        - API key de https://aistudio.google.com/apikey
+#        PEXELS_API_KEY        - gratis en https://www.pexels.com/api/, sin tarjeta.
+#                                 Solo hace falta con motor_broll=fotos (fondos_stock.py).
 #        YOUTUBE_CLIENT_SECRET - contenido de tu client_secret.json (OAuth desktop)
 #        YOUTUBE_TOKEN         - contenido de youtube_token.json ya autorizado
 #                                 una vez en tu máquina (ver README)
@@ -22,18 +24,69 @@ name: Pipeline de contenido
 on:
   workflow_dispatch:
     inputs:
+      desde_etapa:
+        description: "Empezar desde esta etapa. 'video' salta plan y guion, o sea que NO llama a Gemini para texto (necesita un guion ya existente o usar_guion_semilla)"
+        required: false
+        default: "plan"
+        type: choice
+        options: ["plan", "guion", "video", "publicar"]
+      usar_guion_semilla:
+        description: "Copiar un guion semilla (escrito a mano, versionado en el repo) como guion de esta corrida. Con desde_etapa=video y hasta_etapa=video, la corrida entera no toca la API de Gemini"
+        required: false
+        default: false
+        type: boolean
+      archivo_guion_semilla:
+        description: "Qué archivo semilla copiar (solo si usar_guion_semilla=true). El de siempre es guion.semilla.txt; usa otro para probar un guion distinto (p. ej. uno de prueba para motor_broll=fotos) sin tocar el principal"
+        required: false
+        default: "guion.semilla.txt"
+        type: string
       hasta_etapa:
         description: "Correr solo hasta esta etapa (plan, guion, video, publicar)"
         required: false
         default: "publicar"
         type: choice
         options: ["plan", "guion", "video", "publicar"]
-      motor_broll:
-        description: "Motor de video de apoyo (veo = IA generativa de pago, manim = animación por código, gratis)"
+      formato_canal:
+        # Ver formatos_canal.py. Un preset con nombre fija de una sola vez
+        # motor_broll + motor_tts + carpeta_salida + hashtags; pisa a los
+        # campos sueltos de abajo. "manual" (default) no toca nada — los
+        # campos sueltos mandan, igual que siempre.
+        description: "Paquete completo de formato (ver formatos_canal.py). 'manual' deja mandar a motor_broll/motor_tts de abajo"
         required: false
-        default: "veo"
+        default: "manual"
         type: choice
-        options: ["veo", "manim"]
+        options: ["manual", "psicologia", "emocional"]
+      motor_broll:
+        # Por defecto va el motor gratuito, que es el que usa el canal. Con "veo"
+        # de default, una corrida disparada sin tocar este campo (por API, o
+        # dándole a Run workflow de una) se va a Veo y quema la cuota diaria sin
+        # ejecutar nada de HyperFrames: pasó en la corrida 34003101637.
+        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; fotos = banco Pexels con Ken Burns, gratis; veo = IA generativa, con cuota)"
+        required: false
+        default: "hyperframes"
+        type: choice
+        options: ["hyperframes", "manim", "fotos", "veo"]
+      motor_tts:
+        description: "Motor de narración (edge = gratis sin límite; gemini = tope de 10 solicitudes/día)"
+        required: false
+        default: "edge"
+        type: choice
+        options: ["edge", "gemini"]
+      regenerar_guion:
+        description: "Descartar el guion, los clips cacheados y los videos ya hechos, y escribir todo de nuevo (necesario al cambiar de motor_broll: los prompts visuales se escriben distinto para cada motor)"
+        required: false
+        default: false
+        type: boolean
+      regenerar_plan:
+        description: "Descartar también el plan de contenido y volver a planificar (necesario al cambiar de formato: el plan viejo trae duraciones y títulos del formato anterior). Implica regenerar el guion y el video"
+        required: false
+        default: false
+        type: boolean
+      regenerar_video:
+        description: "Rehacer el video con el MISMO guion (descarta los videos ya montados, no el guion). Para cuando cambia cómo se dibujan o se montan las escenas, no lo que dicen"
+        required: false
+        default: false
+        type: boolean
   # schedule:
   #   - cron: "0 14 * * *"  # todos los días 14:00 UTC — descomenta cuando quieras automatizarlo
 
@@ -50,6 +103,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev
 
+      # Sin esto, el estilo de subtítulos pide "Montserrat Black" y libass cae en
+      # silencio a la tipografía por defecto del runner: el karaoke se ve con
+      # otra letra, sin que nada lo reporte.
+      - name: Instalar la tipografía de los subtítulos (Montserrat Black)
+        run: |
+          sudo apt-get install -y fonts-montserrat
+          fc-list | grep -qi "Montserrat-Black" || { echo "Montserrat Black no quedó instalada"; exit 1; }
+
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
@@ -58,18 +119,76 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Fijar motor de video de apoyo
+      - name: Configurar Node.js (necesario si motor_broll = hyperframes)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Instalar @hyperframes/core (para el voiceover carve de vendor/carve.mjs)
+        run: npm ci
+
+      - name: Precalentar HyperFrames (descarga el paquete y su Chromium una sola vez)
+        if: ${{ github.event.inputs.motor_broll == 'hyperframes' }}
+        run: npx --yes hyperframes@0.8.27 --version
+
+      - name: Fijar motor de video de apoyo y de narración
         env:
-          MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'veo' }}
+          MOTOR_BROLL: ${{ github.event.inputs.motor_broll || 'hyperframes' }}
+          MOTOR_TTS: ${{ github.event.inputs.motor_tts || 'edge' }}
+          FORMATO_CANAL: ${{ github.event.inputs.formato_canal || 'manual' }}
         run: |
           python -c "
           import json, os
           with open('config.json') as f:
               cfg = json.load(f)
           cfg['motor_broll'] = os.environ['MOTOR_BROLL']
+          cfg['motor_tts'] = os.environ['MOTOR_TTS']
+          # Si formato_canal es un preset con nombre, sus valores pisan a los
+          # de arriba (ver formatos_canal.py): es la forma de elegir b-roll +
+          # TTS + carpeta de salida de una sola vez en vez de acordarse de
+          # cada campo suelto. 'manual' no toca nada.
+          cfg['formato_canal'] = os.environ['FORMATO_CANAL']
           with open('config.json', 'w') as f:
               json.dump(cfg, f, ensure_ascii=False, indent=2)
           "
+
+      - name: Restaurar caché de pipeline_state (persiste clips ya generados entre corridas)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pipeline_state
+            guion.txt
+            Videos Creados
+          key: pipeline-state-${{ github.run_id }}
+          restore-keys: |
+            pipeline-state-
+
+      - name: Descartar el plan de contenido (regenerar_plan)
+        if: ${{ github.event.inputs.regenerar_plan == 'true' }}
+        run: |
+          rm -f pipeline_state/plan_contenido.json
+          echo "Plan de contenido descartado: se planifica de nuevo en esta corrida."
+
+      - name: Descartar guion y clips cacheados (regenerar_guion)
+        if: ${{ github.event.inputs.regenerar_guion == 'true' || github.event.inputs.regenerar_plan == 'true' }}
+        run: |
+          rm -f guion.txt
+          rm -rf "Videos Creados" pipeline_state/hyperframes_cache pipeline_state/manim_cache
+          echo "Guion, videos y clips cacheados descartados: se reescriben en esta corrida."
+
+      - name: Descartar solo los videos ya montados (regenerar_video)
+        if: ${{ github.event.inputs.regenerar_video == 'true' && github.event.inputs.regenerar_guion != 'true' }}
+        run: |
+          rm -rf "Videos Creados"
+          echo "Videos descartados: se vuelven a montar con el guion que ya está cacheado."
+
+      - name: Usar el guion semilla versionado en el repo (usar_guion_semilla)
+        if: ${{ github.event.inputs.usar_guion_semilla == 'true' }}
+        run: |
+          cp "${{ github.event.inputs.archivo_guion_semilla || 'guion.semilla.txt' }}" guion.txt
+          echo "Guion tomado de ${{ github.event.inputs.archivo_guion_semilla || 'guion.semilla.txt' }} (sin llamar al modelo):"
+          head -4 guion.txt
 
       - name: Restaurar credenciales de YouTube
         env:
@@ -82,9 +201,13 @@ jobs:
       - name: Correr pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python pipeline.py --hasta "${{ github.event.inputs.hasta_etapa || 'publicar' }}"
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: |
+          python pipeline.py \
+            --desde "${{ github.event.inputs.desde_etapa || 'plan' }}" \
+            --hasta "${{ github.event.inputs.hasta_etapa || 'publicar' }}"
 
-      - name: Subir logs y estado como artefacto
+      - name: Subir logs, estado y videos como artefacto
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -92,4 +215,15 @@ jobs:
           path: |
             pipeline_state/
             guion.txt
+            Videos Creados
           retention-days: 14
+
+      - name: Guardar caché de pipeline_state (aunque el pipeline haya fallado)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pipeline_state
+            guion.txt
+            Videos Creados
+          key: pipeline-state-${{ github.run_id }}
