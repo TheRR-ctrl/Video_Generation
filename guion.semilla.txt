@@ -26,4 +26,4 @@ TEXTO: Es como una pestaña del navegador que dejaste abierta: no la estás mira
 ### ESCENA
 VISUAL: [comparacion] (plano 1 de 2) Una barra alta etiquetada Sin anotar muestra la tensión de una tarea que solo vive en tu cabeza. Etiquetas: Sin anotar, Anotada.
 VISUAL: [comparacion] (plano 2 de 2) Al lado, una barra baja etiquetada Anotada muestra cómo baja la tensión en cuanto la tarea queda por escrito. Etiquetas: Sin anotar, Anotada.
-TEXTO: Por eso anotar la tarea pendiente, aunque no la resuelvas todavía, le alcanza a tu cerebro para soltarla un poco.
+TEXTO: Por eso anotar la tarea pendiente, aunque no la resuelvas todavía, le alcanza a tu cerebro para soltarla un poco. Contame en los comentarios qué tarea sin cerrar te sigue rondando a vos, dale like si te sirvió, y quédate suscrito si querés entender mejor por qué tu cabeza funciona así.

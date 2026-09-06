@@ -56,8 +56,13 @@ total. Reglas que reemplazan a las de duración de arriba:
   generar la tensión. Quien mira decide en dos segundos si sigue o desliza.
 - Una sola idea de punta a punta. Nada de "tres estrategias": una, la más
   contraintuitiva, desarrollada hasta el final.
-- El cierre remata la idea y ahí termina. No pidas suscripción ni comentarios, no
-  resumas lo dicho: en un short eso es tiempo tirado."""
+- La última escena remata la idea y, en la misma frase o la siguiente, invita a
+  comentar, dar like y suscribirse retomando el tema puntual del video (el
+  ejemplo o la pregunta del hook), no una frase genérica que serviría para
+  cualquier otro video ("no olvides suscribirte" a secas). Por ejemplo, para un
+  video sobre el efecto Zeigarnik: "Contame en los comentarios qué tarea
+  pendiente no te deja en paz. Si te sirvió, dale like y quédate por más." Nada
+  de resumir lo ya dicho antes de esto: en un short eso es tiempo tirado."""
 
 # El prompt visual tiene que hablarle al motor que realmente va a dibujarlo.
 # Veo filma: entiende "cinematic close-up, morning light, 8k". HyperFrames y
@@ -208,8 +213,13 @@ Reglas:
   tensión inmediata, sin revelar la conclusión.
 - Tono cercano, reflexivo, con ejemplos cotidianos. Puedes mencionar conceptos
   psicológicos conocidos, pero NO inventes estudios, cifras ni autores falsos.
-- Cierra con una idea aplicable concreta y una invitación breve a comentar o
-  suscribirse.
+- Cierra con una idea aplicable concreta y, enganchada a ESE cierre (no pegada
+  aparte), una invitación a comentar, dar like y suscribirse. Tiene que sonar
+  como la continuación natural de lo que se acaba de explicar —retomando el
+  ejemplo, la pregunta del hook o el concepto de la escena— nunca una frase
+  genérica de relleno ("no olvides suscribirte y dar like") que serviría para
+  cualquier video del canal. Cada guion necesita su propio cierre, distinto al
+  de los demás.
 - Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): debe sonar
   como alguien hablando de viva voz.
 - Español neutro latinoamericano, tratando al espectador de TÚ: "cierras",
