@@ -75,6 +75,13 @@ RESOLUCIONES = {
 # que la voz siga sonando natural, y con cuatro valores para que dos videos
 # seguidos no suenen idénticos.
 TONOS_LOCUCION = ("-10Hz", "-6Hz", "-2Hz", "+2Hz")
+# Pedido explícito para el formato estoico: voz más grave y varonil, tipo
+# "alfa" — un registro más bajo que el resto del canal (que busca calidez,
+# no autoridad). -18Hz es notoriamente más grave sin llegar a sonar
+# distorsionado (edge-tts empieza a robotizarse pasado los -25/-30Hz sobre
+# esta voz); se mantienen 3 valores angostos para que dos videos seguidos no
+# suenen idénticos, igual que TONOS_LOCUCION.
+TONOS_LOCUCION_ESTOICO = ("-18Hz", "-16Hz", "-14Hz")
 DURACION_INTRO_CARD_SEG = 3.0
 # En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
 # retrasan el hook, que es justo lo que decide si el espectador se queda. El
@@ -768,7 +775,10 @@ def renderizar_una_historia(bloque, cfg, num=1):
         # no de escena: con el tono fijo todos los videos suenan a la misma voz
         # robótica leyendo, y en un feed eso se nota. La semilla es el título,
         # así que el mismo video siempre suena igual entre corridas.
-        tono_locucion = random.Random(info["hook"]).choice(TONOS_LOCUCION)
+        tonos_disponibles = (
+            TONOS_LOCUCION_ESTOICO if cfg.get("formato_canal") == "estoico" else TONOS_LOCUCION
+        )
+        tono_locucion = random.Random(info["hook"]).choice(tonos_disponibles)
 
         # Cómo se escribe el HTML de cada composición: "plantillas" (por
         # defecto, sin API) o "gemini". Se fija por corrida, no por escena.
