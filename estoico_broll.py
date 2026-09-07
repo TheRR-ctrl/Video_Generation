@@ -40,6 +40,27 @@ logger = logging.getLogger("estoico_broll")
 
 CARPETA_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state", "estoico_cache")
 
+_CARACTERES_INVALIDOS_ARTEFACTO = set('"<>:|*?\r\n')
+
+
+def _purgar_nombres_invalidos():
+    """Borra de la caché cualquier archivo con un carácter que actions/upload-
+    artifact rechaza (rompió las corridas 34105169959 y 34105601948: un nombre
+    viejo con ":" quedó persistido en actions/cache —esa etapa sí había tenido
+    éxito, solo falló la subida del artefacto— y se seguía restaurando en cada
+    corrida siguiente aunque el código ya no lo generara con ese nombre. Sin
+    esto, el archivo colgado revienta la subida para siempre."""
+    if not os.path.isdir(CARPETA_CACHE):
+        return
+    for nombre in os.listdir(CARPETA_CACHE):
+        if _CARACTERES_INVALIDOS_ARTEFACTO & set(nombre):
+            ruta = os.path.join(CARPETA_CACHE, nombre)
+            try:
+                os.remove(ruta)
+                logger.warning(f"Purgado archivo de caché con carácter inválido: {nombre}")
+            except OSError as exc:
+                logger.warning(f"No se pudo purgar {nombre}: {exc}")
+
 
 def _archivo_valido(ruta):
     return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
@@ -114,6 +135,7 @@ def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2)
     la ruta a un clip de video para el plano dado (foto + glifo mezclados), o
     None si falló. `plano_texto` trae el arquetipo entre corchetes y la
     consulta de foto, ej.: "[grieta] muro agrietado luz dorada"."""
+    _purgar_nombres_invalidos()
     sello, consulta = plantillas_sello.extraer_sello_y_consulta(plano_texto)
     ruta_salida = _ruta_cache(sello, consulta, aspecto, duracion)
     if _archivo_valido(ruta_salida):
