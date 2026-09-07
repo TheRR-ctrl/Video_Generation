@@ -66,8 +66,18 @@ def _archivo_valido(ruta):
     return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
 
+# Se suma a la clave de caché del COMPOSITE (no del glifo suelo): si cambia
+# cómo se mezclan foto+glifo (como pasó de blend=screen, roto, a alphamerge+
+# overlay), hay que invalidar los archivos ya cacheados de la corrida
+# anterior — actions/cache los persiste entre corridas, así que sin esto el
+# composite viejo (con el magenta) se seguiría reusando para siempre.
+VERSION_MEZCLA = "alphamerge-v1"
+
+
 def _ruta_cache(sello, consulta, aspecto, duracion):
-    clave = hashlib.sha256(f"{aspecto}|{duracion}|{sello}|{consulta}".encode("utf-8")).hexdigest()[:24]
+    clave = hashlib.sha256(
+        f"{VERSION_MEZCLA}|{aspecto}|{duracion}|{sello}|{consulta}".encode("utf-8")
+    ).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"estoico_{clave}.mp4")
 
