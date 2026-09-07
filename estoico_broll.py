@@ -115,12 +115,30 @@ def _renderizar_sello(sello, ancho, alto, duracion, ruta_salida):
 
 
 def _mezclar(ruta_foto_clip, ruta_sello_clip, duracion, ruta_salida):
-    """Doble exposición: el glifo (blanco/dorado sobre negro) se suma a la
-    foto con blend=screen. El negro puro no aporta nada a la mezcla."""
+    """Superpone el glifo sobre la foto usando su propia luminancia como canal
+    alfa (negro = transparente, blanco/dorado = opaco), no `blend=all_mode=
+    screen`.
+
+    Se probó primero con blend=screen (la técnica estándar de "doble
+    exposición" en edición de video) pero en este ffmpeg (6.1.1-3ubuntu5) esa
+    familia de modos aritméticos (screen/addition/lighten) da resultados
+    imposibles incluso mezclando negro puro sólido con un color sólido
+    conocido: screen(marrón, negro) devolvía magenta en vez del marrón
+    original — verificado numéricamente pixel a pixel, con y sin forzar RGB
+    antes del blend. "normal" (passthrough) funcionaba perfecto, aislando el
+    bug a esos modos aritméticos específicos de esta build.
+
+    alphamerge + overlay evita el problema de raíz: en vez de sumar valores
+    de color (donde un "negro casi negro" por compresión de video puede
+    filtrarse), extrae la luminancia del glifo como canal alfa real y
+    compone con overlay, que si maneja alfa correctamente. Verificado
+    pixel a pixel: el fondo queda exactamente igual donde el glifo es negro."""
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
          "-i", ruta_foto_clip, "-i", ruta_sello_clip,
-         "-filter_complex", "[0:v][1:v]blend=all_mode=screen",
+         "-filter_complex",
+         "[1:v]split[c][a];[a]format=gray[alpha];[c][alpha]alphamerge[glifo];"
+         "[0:v][glifo]overlay=format=auto",
          "-t", str(duracion), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
          ruta_salida],
         check=True, timeout=60,

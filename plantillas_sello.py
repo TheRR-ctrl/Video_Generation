@@ -12,12 +12,15 @@ los diagramas de plantillas_broll.py.
 
 Cómo se compone sobre la foto (ver estoico_broll.py): el glifo se dibuja en
 BLANCO/DORADO puro sobre fondo #000000 (negro absoluto, no el #0b0f14 de
-plantillas_broll) y se mezcla con la foto de fondo usando el filtro de ffmpeg
-`blend=all_mode=screen`. Screen blend es aditivo: donde el glifo es negro
-puro, screen(0, foto) = foto sin ningún cambio — el negro "desaparece" sin
-necesidad de croma ni canal alfa (que HyperFrames no exporta). Donde el glifo
-es blanco/dorado, esa luz se suma sobre la foto. Es el mismo principio que un
-doble exposición fotográfica: dos capas de luz, no un recorte.
+plantillas_broll). La primera versión lo mezclaba con `blend=all_mode=screen`
+(doble exposición: negro no aporta nada, la luz se suma) pero ese modo
+aritmético salió roto en el ffmpeg del runner — daba magenta al "sumar" negro
+puro sobre un color sólido conocido, verificado pixel a pixel. La versión
+real usa la luminancia del glifo como canal alfa (`alphamerge` + `overlay`,
+ver estoico_broll._mezclar): donde el glifo es negro, alfa 0, la foto queda
+intacta; donde es blanco/dorado, alfa alto, se compone encima. Mismo efecto
+visual buscado (el fondo negro "desaparece"), sin depender de un modo de
+blend que resultó no ser confiable en este entorno.
 
 Cada arquetipo es una idea visual mínima y sin texto (el glifo nunca compite
 con los subtítulos ni con la narración, es un acompañamiento wordless):
