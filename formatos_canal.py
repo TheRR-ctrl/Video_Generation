@@ -62,6 +62,19 @@ FORMATOS = {
         "guion_semilla": "guion.semilla.emocional.txt",
         "hashtags_base": ["Reflexion", "FrasesDeVida", "Emociones"],
     },
+    "estoico": {
+        "descripcion": (
+            "Aforismos de resiliencia/disciplina: un glifo animado por código "
+            "(plantillas_sello) mezclado por doble exposición sobre fotos de "
+            "Pexels (estoico_broll) — identidad visual fija, gratis, sin generar "
+            "una imagen distinta por escena."
+        ),
+        "motor_broll": "estoico",
+        "motor_tts": "edge",
+        "carpeta_salida": os.path.join(_CARPETA_BASE, "estoico"),
+        "guion_semilla": "guion.semilla.estoico.txt",
+        "hashtags_base": ["Estoicismo", "Resiliencia", "Disciplina"],
+    },
 }
 
 

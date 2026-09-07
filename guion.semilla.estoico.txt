@@ -1,0 +1,16 @@
+# Dia: 1
+# Tema: Prueba técnica del motor estoico (glifo + foto por doble exposición).
+# TituloHook: Nadie te va a rescatar, y esa es la mejor noticia que vas a recibir hoy.
+# DuracionObjetivoMin: 0.5
+### ESCENA
+VISUAL: [grieta] muro agrietado luz dorada
+TEXTO: Nadie te va a rescatar, y esa es la mejor noticia que vas a recibir hoy. Mientras esperas que alguien más resuelva tu vida, tu vida sigue sin resolverse.
+### ESCENA
+VISUAL: [brasa] vela sola cuarto oscuro
+TEXTO: El dolor que sientes ahora no es tu enemigo. Es la única prueba real de que todavía te importa algo.
+### ESCENA
+VISUAL: [circulo] piedra lisa rio
+TEXTO: La disciplina no se siente bien casi nunca. Se practica igual, todos los días, hasta que deja de pedir permiso.
+### ESCENA
+VISUAL: [ascenso] escalera piedra niebla
+TEXTO: Contame en los comentarios qué peso cargas hoy sin pedir ayuda. Si esto te sostuvo un segundo, dale like y suscríbete.

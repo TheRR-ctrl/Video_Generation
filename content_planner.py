@@ -68,6 +68,7 @@ para desarrollar varias ideas y ejemplos."""
 def construir_schema_plan(formato, formato_canal="manual"):
     es_short = formato == FORMATO_SHORT
     es_emocional = formato_canal == "emocional"
+    es_estoico = formato_canal == "estoico"
     desc_duracion = (
         "Duración objetivo en minutos. Es un short: entre 0.5 y 1 (o sea 30 a 60 segundos)."
         if es_short else
@@ -79,6 +80,13 @@ def construir_schema_plan(formato, formato_canal="manual"):
             "sitúe un estado de ánimo o una imagen concreta (\"A veces el silencio también "
             "es una forma de compañía\"). NO es una pregunta de curiosidad ni un dato: es la "
             "primera línea de una reflexión, no el gancho de un explicador."
+        )
+    elif es_estoico:
+        desc_titulo = (
+            "Sentencia corta y tajante de menos de 60 caracteres, que contradiga el sentido "
+            "común sobre dolor, control o disciplina (\"Nadie te va a rescatar, y esa es la "
+            "mejor noticia que vas a recibir hoy\"). NO es una pregunta de curiosidad: es una "
+            "afirmación dura que se sostiene sola, dicha en segunda persona."
         )
     else:
         desc_titulo = (
@@ -166,6 +174,21 @@ Reglas:
 - Evita cualquier consejo prescriptivo ("deberías", "la clave es"): es contemplación,
   no divulgación."""
 
+SYSTEM_PROMPT_ESTOICO = """Eres estratega de contenido para un canal de YouTube en español
+de aforismos breves sobre dolor, disciplina y templanza (estilo estoico, sin citar ni
+nombrar filósofos). El canal es "sin rostro": no hay presentador en cámara, solo
+narración en off dura y directa, con una identidad visual fija (un glifo animado).
+
+Reglas:
+- Cada día del plan es una tensión distinta (control vs. reacción, disciplina vs.
+  comodidad, silencio vs. aprobación ajena, dolor vs. evitación) — no repitas la
+  misma postura con otras palabras.
+- Nada de consejo práctico de autoayuda ("los 3 pasos para..."): es una postura
+  frente al dolor y el esfuerzo, afirmada con dureza, no una guía.
+- El título/hook NUNCA es una pregunta de curiosidad: es una sentencia corta que
+  contradice el sentido común y se sostiene sola, en segunda persona.
+- Tono directo, sin matices, sin "depende": una idea afirmada con convicción total."""
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("content_planner")
 
@@ -205,10 +228,12 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
     formato = formato_video.formato_de(cfg)
     formato_canal = cfg.get("formato_canal", "manual")
     es_emocional = formato_canal == "emocional"
+    es_estoico = formato_canal == "estoico"
+    ajeno_a_psicologia = es_emocional or es_estoico
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
-    # Las referencias son canales de psicología/divulgación: mezclarlas en el prompt del
-    # formato emocional contaminaría el tono (contenido de reflexión no explica ni divulga).
-    bloque_referencia = "" if es_emocional else f"{construir_bloque_referencia(referencias)}\n\n"
+    # Las referencias son canales de psicología/divulgación: mezclarlas en el prompt de
+    # un formato que no lo es (emocional, estoico) contaminaría el tono.
+    bloque_referencia = "" if ajeno_a_psicologia else f"{construir_bloque_referencia(referencias)}\n\n"
     prompt = (
         f"{bloque_referencia}"
         f"Temas ya usados en este plan (no los repitas ni los parafrasees):\n{temas_existentes}\n\n"
@@ -216,7 +241,12 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
         f"y de los temas ya usados."
     )
 
-    instrucciones_base = SYSTEM_PROMPT_EMOCIONAL if es_emocional else SYSTEM_PROMPT
+    if es_emocional:
+        instrucciones_base = SYSTEM_PROMPT_EMOCIONAL
+    elif es_estoico:
+        instrucciones_base = SYSTEM_PROMPT_ESTOICO
+    else:
+        instrucciones_base = SYSTEM_PROMPT
     response = llamar_con_reintentos(
         client.models.generate_content,
         model=cfg["modelo_texto"],

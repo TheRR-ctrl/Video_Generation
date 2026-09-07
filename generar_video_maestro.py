@@ -33,6 +33,7 @@ import tts_edge
 import veo_broll
 import manim_broll
 import fondos_stock
+import estoico_broll
 import hyperframes_broll
 import hyperframes_audio_mix
 import formato_video
@@ -834,6 +835,19 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 # por plano, con Ken Burns aplicado en fondos_stock.
                 clips_base = [
                     fondos_stock.generar_clip_cacheado(
+                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
+                    )
+                    for plano in escena["planos"]
+                ]
+            elif motor == "estoico":
+                # Formato estoico/resiliencia: cada VISUAL: trae un [arquetipo]
+                # de glifo (grieta/brasa/circulo/anillos/ascenso, ver
+                # plantillas_sello.py) + la consulta de foto en Pexels. Las dos
+                # capas se mezclan por doble exposición (blend=screen) en
+                # estoico_broll.py: es la identidad visual fija del formato,
+                # gratis, sin generar una imagen distinta por escena.
+                clips_base = [
+                    estoico_broll.generar_clip_cacheado(
                         plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
                     )
                     for plano in escena["planos"]

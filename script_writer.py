@@ -82,6 +82,23 @@ DESC_VISUAL_FOTOS = (
     "acompaña el tono de la narración, como 'ventana lluvia silencio' o 'taza de te mesa "
     "madera'. Sin personas identificables, sin texto ni marcas."
 )
+# Para el motor "estoico" (ver estoico_broll.py/plantillas_sello.py): CADA
+# escena lleva un glifo animado por código MÁS una foto de banco, mezclados
+# por doble exposición. El formato del texto es "[arquetipo] palabras de
+# foto", igual que "[comparacion] ..." en el motor de diagramas.
+DESC_VISUAL_ESTOICO = (
+    "El arquetipo del GLIFO entre corchetes seguido de 2-4 palabras concretas EN "
+    "ESPAÑOL para buscar una foto de banco (objeto/escena + luz o clima), en una "
+    "sola cadena: '[grieta] muro agrietado luz dorada'. Arquetipos disponibles, "
+    "elegí el que mejor represente el momento de la reflexión en esta escena: "
+    "'grieta' (una fractura que se sella con luz — una herida que se vuelve "
+    "fuerza), 'brasa' (un punto que casi se apaga y vuelve a encenderse — lo que "
+    "resiste sin que nadie lo sostenga), 'circulo' (un círculo que se traza "
+    "completo — la disciplina como práctica repetida), 'anillos' (ondas que se "
+    "expanden desde un punto — una decisión pequeña con efecto grande), "
+    "'ascenso' (una línea que sube y remata en un destello — levantarse a pesar "
+    "del peso). La foto: sin personas identificables, sin texto ni marcas."
+)
 DESC_VISUAL_MOTION = (
     "Descripción EN ESPAÑOL del DIAGRAMA a dibujar (no de una toma filmada, no de una "
     "metáfora poética). Decí qué elementos concretos aparecen y qué relación muestran "
@@ -147,6 +164,7 @@ DESC_PLANOS_VISUAL = (
 
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 MOTOR_FOTOS = "fotos"
+MOTOR_ESTOICO = "estoico"
 
 
 def construir_schema_guion(motor_broll, formato="largo"):
@@ -156,6 +174,8 @@ def construir_schema_guion(motor_broll, formato="largo"):
         descripcion_visual = DESC_VISUAL_MOTION
     elif motor_broll == MOTOR_FOTOS:
         descripcion_visual = DESC_VISUAL_FOTOS
+    elif motor_broll == MOTOR_ESTOICO:
+        descripcion_visual = DESC_VISUAL_ESTOICO
     else:
         descripcion_visual = DESC_VISUAL_FILMABLE
     propiedades = {
@@ -269,6 +289,36 @@ Reglas:
   Nada de voseo ("cerrás", "tenés") ni de "vosotros".
 - No incluyas markdown ni encabezados en el texto narrado."""
 
+SYSTEM_PROMPT_ESTOICO = """Eres guionista de un canal de YouTube en español de
+aforismos breves sobre dolor, disciplina y templanza (estilo estoico:
+Marco Aurelio, Séneca, pero sin citarlos ni nombrarlos), narrado en off con
+una identidad visual fija (un glifo animado que se repite en todo el video).
+
+Reglas:
+- Divide el guion en escenas de 15-25 segundos de narración cada una (~40-70
+  palabras por escena). Genera las escenas necesarias para cubrir la duración
+  objetivo a un ritmo de locución firme, ni apurado ni pausado.
+- La primera escena golpea con una frase corta y tajante sobre dolor, control
+  o disciplina que contradiga el sentido común ("Nadie te va a rescatar, y esa
+  es la mejor noticia que vas a recibir hoy"). Nunca una pregunta de
+  curiosidad ni una imagen contemplativa: esto es una declaración, no una
+  invitación a pensar.
+- Tono duro, directo, en segunda persona ("tú", nunca "uno" ni impersonal).
+  Frases cortas. Nada de matices ni "depende": una idea afirmada con
+  convicción total, aunque sea incómoda.
+- Cada escena avanza la misma idea central sin desviarse a consejos prácticos
+  de autoayuda ("haz esto", "el primer paso es"): es una postura frente al
+  dolor, no una guía de pasos.
+- Cierra con la frase más dura de todo el guion (el remate, no una síntesis)
+  y, enganchada a ESE remate, una invitación directa a comentar, dar like y
+  suscribirse que retome la idea central — nunca una frase genérica. Cada
+  guion necesita su propio cierre.
+- Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): cada
+  frase tiene que sonar como una sentencia dicha en voz alta, no leída.
+- Español neutro latinoamericano, tratando al espectador de TÚ: "sabes",
+  "puedes", "te duele". Nada de voseo ("sabés", "podés") ni de "vosotros".
+- No incluyas markdown ni encabezados en el texto narrado."""
+
 GUIA_VISUAL_MOTION = """
 
 El video de apoyo NO se filma: se dibuja con código (motion graphics sobre fondo
@@ -324,7 +374,12 @@ def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo", 
         f"Duración objetivo: {dia['duracion_objetivo_min']} minutos"
     )
 
-    instrucciones = SYSTEM_PROMPT_EMOCIONAL if formato_canal == "emocional" else SYSTEM_PROMPT
+    if formato_canal == "emocional":
+        instrucciones = SYSTEM_PROMPT_EMOCIONAL
+    elif formato_canal == "estoico":
+        instrucciones = SYSTEM_PROMPT_ESTOICO
+    else:
+        instrucciones = SYSTEM_PROMPT
     if formato == FORMATO_SHORT:
         instrucciones += GUIA_SHORT
     if motor_broll in MOTORES_MOTION_GRAPHICS:
