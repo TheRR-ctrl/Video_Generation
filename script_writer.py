@@ -205,6 +205,31 @@ def construir_schema_guion(motor_broll, formato="largo"):
             "description": DESC_PLANOS_VISUAL.format(min=min_planos, max=max_planos),
         }
         requeridos.append("planos_visuales")
+    elif motor_broll in (MOTOR_FOTOS, MOTOR_ESTOICO):
+        # Antes esto era una sola foto por escena (un corte cada 5-8s, la
+        # escena entera): por debajo del estándar real de retención de shorts
+        # en 2026, que pide un corte cada 2-4s (fuentes: shortzly.com,
+        # opus.pro — perder pacing cuesta ~3% de retención por segundo). Se
+        # subdivide la escena en 2-3 tomas, mismo mecanismo que ya usa
+        # MOTORES_MOTION_GRAPHICS.
+        min_planos, max_planos = PLANOS_POR_ESCENA_SHORT if es_short else PLANOS_POR_ESCENA
+        propiedades["planos_visuales"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": min_planos,
+            "maxItems": max_planos,
+            "description": (
+                f"Entre {min_planos} y {max_planos} tomas que se turnan en pantalla mientras "
+                "la narración de esta escena sigue de corrido (un corte cada 2-4 segundos, no "
+                "una sola imagen fija toda la escena). No son la misma idea repetida: cada toma "
+                "avanza algo — un detalle nuevo, un encuadre distinto, la siguiente imagen de la "
+                "misma escena — pero manteniendo el mismo tono y tema. Cada elemento sigue el "
+                f"mismo formato que se describe acá: {descripcion_visual}"
+            ),
+        }
+        requeridos.append("planos_visuales")
+
+    if es_motion:
         propiedades["tipo_visual"] = {
             "type": "string",
             "enum": TIPOS_VISUAL,
