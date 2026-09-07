@@ -126,7 +126,11 @@ def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2)
 
     from generar_video_maestro import RESOLUCIONES  # import tardío: evita el ciclo, igual que fondos_stock
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["9:16"])
-    ruta_sello = os.path.join(CARPETA_CACHE, f"sello_{sello}_{aspecto}_{duracion}.mp4")
+    # Nombre de archivo por ancho x alto, no por "aspecto" tal cual: "9:16" trae
+    # ":", que actions/upload-artifact rechaza al subir el artefacto (se vio en
+    # la corrida 34105169959 — el video se generó bien, pero la subida del
+    # artefacto entero abortó por este único archivo).
+    ruta_sello = os.path.join(CARPETA_CACHE, f"sello_{sello}_{ancho}x{alto}_{duracion}.mp4")
     try:
         if not _archivo_valido(ruta_sello):
             os.makedirs(CARPETA_CACHE, exist_ok=True)
