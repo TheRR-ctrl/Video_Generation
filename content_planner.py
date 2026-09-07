@@ -159,6 +159,23 @@ nicho, únicamente como referencia de tono y ángulo. Reglas estrictas:
 - Evita cualquier consejo que se preste a diagnóstico clínico; es contenido de
   divulgación/autoayuda, no terapia."""
 
+# Se agrega a los tres prompts de arriba (no solo al de psicología): el título
+# lo escribe este módulo y la narración script_writer.py, y cada uno tenía su
+# propia regla de registro por separado. Sin esto un mismo video puede decir
+# "recordás" en el título y "recuerdas" en la locución 5 segundos después —
+# pasó de verdad en un guion real (run 34031773948, día del efecto Zeigarnik
+# vergonzoso) y se nota como un error de doblaje, no como una decisión de
+# estilo.
+REGLA_REGISTRO = """
+
+Registro: español neutro latinoamericano, tratando al espectador de TÚ
+("recuerdas", "sientes", "puedes"). Nada de voseo ("recordás", "sentís",
+"podés") ni de "vosotros", ni siquiera por variar la frase: la narración del
+mismo video usa tú consistentemente, y un título en voseo se nota como un
+error de coherencia en los primeros 3 segundos."""
+
+SYSTEM_PROMPT += REGLA_REGISTRO
+
 SYSTEM_PROMPT_EMOCIONAL = """Eres estratega de contenido para un canal de YouTube en español
 de reflexiones breves tipo carta/poesía sobre fotografías reales evocadoras. El canal es
 "sin rostro": no hay presentador en cámara, solo narración en off pausada e íntima.
@@ -173,6 +190,7 @@ Reglas:
   frase evocadora, la primera línea de la reflexión en sí misma.
 - Evita cualquier consejo prescriptivo ("deberías", "la clave es"): es contemplación,
   no divulgación."""
+SYSTEM_PROMPT_EMOCIONAL += REGLA_REGISTRO
 
 SYSTEM_PROMPT_ESTOICO = """Eres estratega de contenido para un canal de YouTube en español
 de aforismos breves sobre dolor, disciplina y templanza (estilo estoico, sin citar ni
@@ -188,6 +206,7 @@ Reglas:
 - El título/hook NUNCA es una pregunta de curiosidad: es una sentencia corta que
   contradice el sentido común y se sostiene sola, en segunda persona.
 - Tono directo, sin matices, sin "depende": una idea afirmada con convicción total."""
+SYSTEM_PROMPT_ESTOICO += REGLA_REGISTRO
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("content_planner")
