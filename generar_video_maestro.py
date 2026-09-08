@@ -68,20 +68,30 @@ RESOLUCIONES = {
 }
 
 # Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts).
-# Corrido hacia abajo respecto del rango original del pipeline hermano
-# (-8Hz a +4Hz): un pitch más grave se lee como más cálido/cercano, que es lo
-# que pide el género del canal (psicología, reflexión) frente al original,
-# pensado para historias con más urgencia narrativa. Se mantiene angosto para
-# que la voz siga sonando natural, y con cuatro valores para que dos videos
-# seguidos no suenen idénticos.
+# Cada formato_canal tiene su propia identidad de voz — pedido explícito del
+# usuario, para que los tres canales no suenen como la misma persona leyendo
+# guiones distintos:
+#   - psicologia: voz FEMENINA (Dalia), tono agradable/cálido pero sin
+#     forzarla grave — un pitch muy negativo en una voz que ya es aguda por
+#     naturaleza suena artificial, no "profundo".
+#   - emocional: tono NEUTRO, cerca de 0Hz — ni la calidez de psicología ni
+#     la gravedad de estoico, para no competir con el tono ya poético/pausado
+#     del guion en sí.
+#   - estoico: voz masculina, grave y varonil ("alfa"). -18Hz es notoriamente
+#     más grave sin llegar a sonar distorsionado (edge-tts empieza a
+#     robotizarse pasado los -25/-30Hz sobre esta voz).
+# TONOS_LOCUCION es el default para "manual" (sin formato_canal, o uno no
+# contemplado abajo) — el rango que ya venía usando el canal antes de separar
+# por formato.
 TONOS_LOCUCION = ("-10Hz", "-6Hz", "-2Hz", "+2Hz")
-# Pedido explícito para el formato estoico: voz más grave y varonil, tipo
-# "alfa" — un registro más bajo que el resto del canal (que busca calidez,
-# no autoridad). -18Hz es notoriamente más grave sin llegar a sonar
-# distorsionado (edge-tts empieza a robotizarse pasado los -25/-30Hz sobre
-# esta voz); se mantienen 3 valores angostos para que dos videos seguidos no
-# suenen idénticos, igual que TONOS_LOCUCION.
+TONOS_LOCUCION_PSICOLOGIA = ("-4Hz", "-2Hz", "+0Hz", "+2Hz")
+TONOS_LOCUCION_EMOCIONAL = ("-2Hz", "+0Hz", "+2Hz")
 TONOS_LOCUCION_ESTOICO = ("-18Hz", "-16Hz", "-14Hz")
+TONOS_LOCUCION_POR_FORMATO = {
+    "psicologia": TONOS_LOCUCION_PSICOLOGIA,
+    "emocional": TONOS_LOCUCION_EMOCIONAL,
+    "estoico": TONOS_LOCUCION_ESTOICO,
+}
 DURACION_INTRO_CARD_SEG = 3.0
 # En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
 # retrasan el hook, que es justo lo que decide si el espectador se queda. El
@@ -775,9 +785,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         # no de escena: con el tono fijo todos los videos suenan a la misma voz
         # robótica leyendo, y en un feed eso se nota. La semilla es el título,
         # así que el mismo video siempre suena igual entre corridas.
-        tonos_disponibles = (
-            TONOS_LOCUCION_ESTOICO if cfg.get("formato_canal") == "estoico" else TONOS_LOCUCION
-        )
+        tonos_disponibles = TONOS_LOCUCION_POR_FORMATO.get(cfg.get("formato_canal"), TONOS_LOCUCION)
         tono_locucion = random.Random(info["hook"]).choice(tonos_disponibles)
 
         # Cómo se escribe el HTML de cada composición: "plantillas" (por

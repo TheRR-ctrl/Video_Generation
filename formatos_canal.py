@@ -48,6 +48,11 @@ FORMATOS = {
         "motor_broll": "hyperframes",
         "motor_composicion": "plantillas",
         "motor_tts": "edge",
+        # Pedido explícito: psicología con voz de mujer (el resto del canal
+        # usa masculina por default en config.json/CONFIG_DEFAULT). El tono
+        # "agradable" en sí lo fija TONOS_LOCUCION_PSICOLOGIA en
+        # generar_video_maestro.py.
+        "genero_narrador": "femenino",
         "carpeta_salida": os.path.join(_CARPETA_BASE, "psicologia"),
         # Documental, no consumido por código: qué guion semilla usar con
         # este formato al armar el input archivo_guion_semilla del workflow.
