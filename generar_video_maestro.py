@@ -34,6 +34,7 @@ import veo_broll
 import manim_broll
 import fondos_stock
 import estoico_broll
+import curiosidades_broll
 import hyperframes_broll
 import hyperframes_audio_mix
 import formato_video
@@ -87,10 +88,15 @@ TONOS_LOCUCION = ("-10Hz", "-6Hz", "-2Hz", "+2Hz")
 TONOS_LOCUCION_PSICOLOGIA = ("-4Hz", "-2Hz", "+0Hz", "+2Hz")
 TONOS_LOCUCION_EMOCIONAL = ("-2Hz", "+0Hz", "+2Hz")
 TONOS_LOCUCION_ESTOICO = ("-18Hz", "-16Hz", "-14Hz")
+# Curiosidades: tono entusiasta de divulgación, ni tan grave como estoico ni
+# tan neutro como emocional — un poco más arriba que el default para que
+# suene despierto/rápido, sin llegar al agudo artificial de +Hz altos.
+TONOS_LOCUCION_CURIOSIDADES = ("-6Hz", "-2Hz", "+2Hz", "+4Hz")
 TONOS_LOCUCION_POR_FORMATO = {
     "psicologia": TONOS_LOCUCION_PSICOLOGIA,
     "emocional": TONOS_LOCUCION_EMOCIONAL,
     "estoico": TONOS_LOCUCION_ESTOICO,
+    "curiosidades": TONOS_LOCUCION_CURIOSIDADES,
 }
 DURACION_INTRO_CARD_SEG = 3.0
 # En un short de 40 segundos, 3 de tarjeta de título son el 8% del video y —peor—
@@ -866,6 +872,18 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 # gratis, sin generar una imagen distinta por escena.
                 clips_base = [
                     estoico_broll.generar_clip_cacheado(
+                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
+                    )
+                    for plano in escena["planos"]
+                ]
+            elif motor == "curiosidades":
+                # Formato curiosidades científicas: cada VISUAL: trae un
+                # [arquetipo] de gráfico (rayo/barra/onda/ruido, ver
+                # plantillas_curiosidades.py) con sus etiquetas/datos
+                # embebidos. Todo dibujado por código —lluvia y reflejo de
+                # agua incluidos—, sin fotos de banco ni API de imagen.
+                clips_base = [
+                    curiosidades_broll.generar_clip_cacheado(
                         plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
                     )
                     for plano in escena["planos"]

@@ -69,6 +69,7 @@ def construir_schema_plan(formato, formato_canal="manual"):
     es_short = formato == FORMATO_SHORT
     es_emocional = formato_canal == "emocional"
     es_estoico = formato_canal == "estoico"
+    es_curiosidades = formato_canal == "curiosidades"
     desc_duracion = (
         "Duración objetivo en minutos. Es un short: entre 0.5 y 1 (o sea 30 a 60 segundos)."
         if es_short else
@@ -88,6 +89,13 @@ def construir_schema_plan(formato, formato_canal="manual"):
             "mejor noticia que vas a recibir hoy\"). NO es una pregunta de curiosidad: es una "
             "afirmación dura que se sostiene sola, dicha en segunda persona."
         )
+    elif es_curiosidades:
+        desc_titulo = (
+            "Dato o pregunta sorprendente de menos de 60 caracteres, concreto y "
+            "verificable (\"Un rayo es 5 veces más caliente que el sol\"). NO es "
+            "una introducción genérica (\"hoy hablamos de...\"): es el dato mismo, "
+            "dicho de forma que genere incredulidad o curiosidad inmediata."
+        )
     else:
         desc_titulo = (
             "Título del short, menos de 60 caracteres. Es la frase con la que abre el video, "
@@ -105,6 +113,9 @@ def construir_schema_plan(formato, formato_canal="manual"):
         "2-3 frases con el arco de la reflexión: la imagen que abre, el sentimiento que "
         "desarrolla y la idea en la que decanta. Sin moraleja ni consejo."
         if es_emocional and es_short else
+        "2-3 frases con el arco: el dato que abre, cómo se explica y la comparación o "
+        "cifra que lo hace impactante. Una sola idea de punta a punta."
+        if es_curiosidades and es_short else
         "2-3 frases con el arco del short: el hook que abre, la idea que lo explica y el "
         "remate. Una sola idea de punta a punta."
         if es_short else
@@ -208,6 +219,24 @@ Reglas:
 - Tono directo, sin matices, sin "depende": una idea afirmada con convicción total."""
 SYSTEM_PROMPT_ESTOICO += REGLA_REGISTRO
 
+SYSTEM_PROMPT_CURIOSIDADES = """Eres estratega de contenido para un canal de YouTube en español
+de curiosidades científicas breves (física, electricidad, fenómenos naturales). El canal es
+"sin rostro": no hay presentador en cámara, solo narración en off sobre gráficos animados
+dibujados por código (rayos, ondas, barras de datos).
+
+Reglas:
+- Cada día del plan es un fenómeno físico distinto (electricidad estática, rayos, ondas
+  sonoras, magnetismo, presión, temperatura) — no repitas el mismo fenómeno con otro ángulo.
+- El título/hook es un dato concreto y verificable que genere incredulidad inmediata, nunca
+  un tema enunciado ("La electricidad estática") ni una introducción genérica.
+- Prioriza fenómenos que se puedan mostrar con un gráfico: una comparación de magnitudes, una
+  descarga o umbral, dos frecuencias, una señal irregular. Evita ángulos puramente narrativos
+  que no tengan nada medible o comparable.
+- NO inventes cifras, estudios ni nombres: cualquier número tiene que ser real y conocido.
+- Evita el tono de clase magistral: es el entusiasmo de compartir un dato asombroso, no una
+  lección."""
+SYSTEM_PROMPT_CURIOSIDADES += REGLA_REGISTRO
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("content_planner")
 
@@ -248,7 +277,8 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
     formato_canal = cfg.get("formato_canal", "manual")
     es_emocional = formato_canal == "emocional"
     es_estoico = formato_canal == "estoico"
-    ajeno_a_psicologia = es_emocional or es_estoico
+    es_curiosidades = formato_canal == "curiosidades"
+    ajeno_a_psicologia = es_emocional or es_estoico or es_curiosidades
     temas_existentes = "\n".join(f"- {d['tema']}" for d in dias_existentes) or "(ninguno todavía)"
     # Las referencias son canales de psicología/divulgación: mezclarlas en el prompt de
     # un formato que no lo es (emocional, estoico) contaminaría el tono.
@@ -264,6 +294,8 @@ def generar_dias_faltantes(client, cfg, referencias, dias_existentes, cantidad_a
         instrucciones_base = SYSTEM_PROMPT_EMOCIONAL
     elif es_estoico:
         instrucciones_base = SYSTEM_PROMPT_ESTOICO
+    elif es_curiosidades:
+        instrucciones_base = SYSTEM_PROMPT_CURIOSIDADES
     else:
         instrucciones_base = SYSTEM_PROMPT
     response = llamar_con_reintentos(

@@ -80,6 +80,20 @@ FORMATOS = {
         "guion_semilla": "guion.semilla.estoico.txt",
         "hashtags_base": ["Estoicismo", "Resiliencia", "Disciplina"],
     },
+    "curiosidades": {
+        "descripcion": (
+            "Curiosidades científicas con estética 'panel de laboratorio nocturno' "
+            "(plantillas_curiosidades sobre HyperFrames: lluvia ambiental, rayo "
+            "fractal, ondas, barras de datos, reflejo de agua) — inspirado en el "
+            "video de referencia de electricidad/campos eléctricos, sin fotos de "
+            "banco ni API de imagen: todo dibujado por código."
+        ),
+        "motor_broll": "curiosidades",
+        "motor_tts": "edge",
+        "carpeta_salida": os.path.join(_CARPETA_BASE, "curiosidades"),
+        "guion_semilla": "guion.semilla.curiosidades.txt",
+        "hashtags_base": ["Ciencia", "Curiosidades", "Datos"],
+    },
 }
 
 

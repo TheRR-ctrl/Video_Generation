@@ -99,6 +99,24 @@ DESC_VISUAL_ESTOICO = (
     "'ascenso' (una línea que sube y remata en un destello — levantarse a pesar "
     "del peso). La foto: sin personas identificables, sin texto ni marcas."
 )
+# Para el motor "curiosidades" (ver plantillas_curiosidades.py): cada plano es
+# un arquetipo de gráfico animado por código (no una foto, no un diagrama
+# genérico), con sus etiquetas y datos embebidos en la misma cadena — igual
+# convención que "[arquetipo] ..." del motor estoico.
+DESC_VISUAL_CURIOSIDADES = (
+    "El arquetipo del gráfico entre corchetes, seguido de una descripción breve "
+    "EN ESPAÑOL, luego 'Etiquetas: a, b' y 'Datos: n, n' si aplican, todo en una "
+    "sola cadena: '[rayo] descarga entre dos nubes. Etiquetas: 30.000 voltios' o "
+    "'[barra] campo eléctrico con lluvia vs sin lluvia. Etiquetas: en seco, con "
+    "lluvia. Datos: 1, 6'. Arquetipos disponibles, elegí el que mejor sirva para "
+    "lo que se explica en esta escena: 'rayo' (una descarga fractal ramificada — "
+    "para voltajes, umbrales, momentos de ruptura), 'barra' (una o dos barras de "
+    "progreso con brillo — para comparar dos magnitudes con números reales), "
+    "'onda' (dos ondas senoidales superpuestas — para comparar dos frecuencias o "
+    "ciclos periódicos), 'ruido' (una señal irregular tipo osciloscopio — para "
+    "fenómenos caóticos, interferencia o variabilidad). Si la escena no tiene "
+    "una cifra real, omití 'Datos:' entero: preferible sin números a uno inventado."
+)
 DESC_VISUAL_MOTION = (
     "Descripción EN ESPAÑOL del DIAGRAMA a dibujar (no de una toma filmada, no de una "
     "metáfora poética). Decí qué elementos concretos aparecen y qué relación muestran "
@@ -165,6 +183,7 @@ DESC_PLANOS_VISUAL = (
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 MOTOR_FOTOS = "fotos"
 MOTOR_ESTOICO = "estoico"
+MOTOR_CURIOSIDADES = "curiosidades"
 
 
 def construir_schema_guion(motor_broll, formato="largo"):
@@ -176,6 +195,8 @@ def construir_schema_guion(motor_broll, formato="largo"):
         descripcion_visual = DESC_VISUAL_FOTOS
     elif motor_broll == MOTOR_ESTOICO:
         descripcion_visual = DESC_VISUAL_ESTOICO
+    elif motor_broll == MOTOR_CURIOSIDADES:
+        descripcion_visual = DESC_VISUAL_CURIOSIDADES
     else:
         descripcion_visual = DESC_VISUAL_FILMABLE
     propiedades = {
@@ -205,7 +226,7 @@ def construir_schema_guion(motor_broll, formato="largo"):
             "description": DESC_PLANOS_VISUAL.format(min=min_planos, max=max_planos),
         }
         requeridos.append("planos_visuales")
-    elif motor_broll in (MOTOR_FOTOS, MOTOR_ESTOICO):
+    elif motor_broll in (MOTOR_FOTOS, MOTOR_ESTOICO, MOTOR_CURIOSIDADES):
         # Antes esto era una sola foto por escena (un corte cada 5-8s, la
         # escena entera): por debajo del estándar real de retención de shorts
         # en 2026, que pide un corte cada 2-4s (fuentes: shortzly.com,
@@ -344,6 +365,36 @@ Reglas:
   "puedes", "te duele". Nada de voseo ("sabés", "podés") ni de "vosotros".
 - No incluyas markdown ni encabezados en el texto narrado."""
 
+SYSTEM_PROMPT_CURIOSIDADES = """Eres guionista de un canal de YouTube en español de
+curiosidades científicas breves (física, electricidad, fenómenos naturales),
+narrado en off, con video de apoyo dibujado por código (rayos, ondas, barras
+de datos, señales) sobre un fondo de laboratorio nocturno con lluvia.
+
+Reglas:
+- Divide el guion en escenas de 15-25 segundos de narración cada una (~40-70
+  palabras por escena). Genera las escenas necesarias para cubrir la duración
+  objetivo a un ritmo de locución ágil, de ~140-150 palabras/minuto en español.
+- La primera escena es el hook: un dato o pregunta sorprendente y concreto
+  ("Un rayo calienta el aire más que la superficie del sol"), nunca una
+  introducción genérica ("hoy vamos a hablar de...").
+- Tono entusiasta y claro, como quien comparte un dato asombroso con un amigo,
+  no una clase magistral. Usa comparaciones cotidianas para las magnitudes
+  ("eso es cinco veces más rápido que un rayo de luz"). NO inventes cifras,
+  estudios ni nombres: si citas un número, tiene que ser real y conocido.
+- Cada escena gira sobre UN dato o mecanismo concreto que se pueda mostrar con
+  un gráfico (una descarga, una comparación de magnitudes, dos frecuencias,
+  una señal irregular) — evita divagar en generalidades que no se puedan
+  graficar.
+- Cierra con el dato más impactante de todo el guion y, enganchada a ESE
+  cierre, una invitación a comentar, dar like y suscribirse que retome el
+  fenómeno explicado — nunca una frase genérica. Cada guion necesita su
+  propio cierre.
+- Nada de lenguaje de texto escrito ("en resumen", "por lo tanto"): debe sonar
+  como alguien contando un dato en voz alta.
+- Español neutro latinoamericano, tratando al espectador de TÚ: "sabías",
+  "puedes". Nada de voseo ("sabías vos", "podés") ni de "vosotros".
+- No incluyas markdown ni encabezados en el texto narrado."""
+
 GUIA_VISUAL_MOTION = """
 
 El video de apoyo NO se filma: se dibuja con código (motion graphics sobre fondo
@@ -403,6 +454,8 @@ def escribir_guion_dia(client, modelo, dia, motor_broll="veo", formato="largo", 
         instrucciones = SYSTEM_PROMPT_EMOCIONAL
     elif formato_canal == "estoico":
         instrucciones = SYSTEM_PROMPT_ESTOICO
+    elif formato_canal == "curiosidades":
+        instrucciones = SYSTEM_PROMPT_CURIOSIDADES
     else:
         instrucciones = SYSTEM_PROMPT
     if formato == FORMATO_SHORT:
