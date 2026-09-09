@@ -115,7 +115,12 @@ DESC_VISUAL_CURIOSIDADES = (
     "'onda' (dos ondas senoidales superpuestas — para comparar dos frecuencias o "
     "ciclos periódicos), 'ruido' (una señal irregular tipo osciloscopio — para "
     "fenómenos caóticos, interferencia o variabilidad). Si la escena no tiene "
-    "una cifra real, omití 'Datos:' entero: preferible sin números a uno inventado."
+    "una cifra real, omití 'Datos:' entero: preferible sin números a uno inventado. "
+    "IMPORTANTE con 'barra': si estás comparando DOS magnitudes (\"5 veces más "
+    "caliente que...\", \"el doble de...\"), las dos van en el MISMO plano "
+    "'[barra]' con sus dos etiquetas y sus dos datos juntos — nunca partidas en "
+    "dos planos '[barra]' separados, porque entonces cada barra se dibuja sola y "
+    "llena, y se pierde la comparación visual que es el punto del gráfico."
 )
 DESC_VISUAL_MOTION = (
     "Descripción EN ESPAÑOL del DIAGRAMA a dibujar (no de una toma filmada, no de una "
