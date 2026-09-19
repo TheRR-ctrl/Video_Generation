@@ -27,12 +27,12 @@ import subprocess
 
 from google import genai
 
+import archivos
 import gemini_utils
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "manim_cache")
-DURACION_OBJETIVO_SEG = 8
 TIMEOUT_RENDER_SEG = 180
 
 RESOLUCIONES = {
@@ -79,10 +79,6 @@ def _ruta_cache(prompt_visual, aspecto):
     clave = hashlib.sha256(f"{aspecto}|{prompt_visual}".encode("utf-8")).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     return os.path.join(CARPETA_CACHE, f"manim_{clave}.mp4")
-
-
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
 
 def _limpiar_codigo(texto):
@@ -141,7 +137,7 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
     local a un clip de video para el prompt dado (generado con Manim en vez
     de Veo), o None si falló tras los reintentos."""
     ruta_salida = _ruta_cache(prompt_visual, aspecto)
-    if _archivo_valido(ruta_salida):
+    if archivos.valido(ruta_salida):
         return ruta_salida
 
     cliente = _obtener_cliente()
@@ -149,7 +145,7 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
         try:
             codigo = _generar_codigo_escena(cliente, prompt_visual, modelo)
             _renderizar_codigo(codigo, aspecto, ruta_salida)
-            if _archivo_valido(ruta_salida):
+            if archivos.valido(ruta_salida):
                 return ruta_salida
         except Exception as exc:
             logger.warning(f"Manim intento {intento}/{reintentos} falló: {exc}")

@@ -1,0 +1,29 @@
+# Dia: 1
+# Tema: El efecto Zeigarnik: por qué una tarea sin terminar ocupa más espacio mental que una terminada.
+# TituloHook: ¿Por qué un mensaje sin responder te persigue más que uno que ya contestaste?
+# DuracionObjetivoMin: 0.6
+### ESCENA
+VISUAL: [comparacion] (plano 1 de 2) Una barra baja etiquetada Ya respondido: apenas ocupa espacio en tu cabeza. Etiquetas: Ya respondido, Sin responder.
+VISUAL: [comparacion] (plano 2 de 2) Al lado se dispara una barra alta etiquetada Sin responder, mucho más grande que la anterior. Etiquetas: Ya respondido, Sin responder.
+TEXTO: Ese mensaje que dejaste en visto hace tres días sigue ahí, dando vueltas, aunque no quieras pensar en él.
+### ESCENA
+VISUAL: [proceso] (plano 1 de 3) Un nodo inicial etiquetado Tarea abierta se enciende en pantalla. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+VISUAL: [proceso] (plano 2 de 3) Una flecha conecta hacia un segundo nodo rotulado Tensión mental. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+VISUAL: [proceso] (plano 3 de 3) Un tercer nodo etiquetado Se repite sola se ilumina completando la cadena. Etiquetas: Tarea abierta, Tensión mental, Se repite sola.
+TEXTO: Se llama efecto Zeigarnik: tu cerebro guarda un lugar especial para todo lo que dejaste sin cerrar.
+### ESCENA
+VISUAL: [evolucion] (plano 1 de 2) Un indicador marca la Tensión al momento de dejar la tarea abierta. Etiquetas: Tarea abierta, Tarea resuelta.
+VISUAL: [evolucion] (plano 2 de 2) La línea se mantiene arriba todo el tiempo y recién cae de golpe al llegar a Tarea resuelta. Etiquetas: Tarea abierta, Tarea resuelta.
+TEXTO: Esa tensión no baja sola con el tiempo, se queda igual de alta hasta que la tarea se cierra de verdad.
+### ESCENA
+VISUAL: [estructura] (plano 1 de 2) Un núcleo central etiquetado Efecto Zeigarnik aparece en el medio. Etiquetas: Efecto Zeigarnik, Mensajes sin responder, Tareas a medias, Conversaciones pendientes.
+VISUAL: [estructura] (plano 2 de 2) Del núcleo salen tres ramas hacia Mensajes sin responder, Tareas a medias y Conversaciones pendientes. Etiquetas: Efecto Zeigarnik, Mensajes sin responder, Tareas a medias, Conversaciones pendientes.
+TEXTO: Y no es solo el celular: cualquier tarea a medias o conversación pendiente activa exactamente lo mismo.
+### ESCENA
+VISUAL: [metafora] (plano 1 de 2) Una pestaña de navegador queda abierta, ocupando su propio espacio fijo. Etiquetas: Pestaña abierta, Mente ocupada.
+VISUAL: [metafora] (plano 2 de 2) Esa pestaña abierta se conecta con un espacio idéntico ocupado en la mente. Etiquetas: Pestaña abierta, Mente ocupada.
+TEXTO: Es como una pestaña del navegador que dejaste abierta: no la estás mirando, pero sigue gastando memoria.
+### ESCENA
+VISUAL: [comparacion] (plano 1 de 2) Una barra alta etiquetada Sin anotar muestra la tensión de una tarea que solo vive en tu cabeza. Etiquetas: Sin anotar, Anotada.
+VISUAL: [comparacion] (plano 2 de 2) Al lado, una barra baja etiquetada Anotada muestra cómo baja la tensión en cuanto la tarea queda por escrito. Etiquetas: Sin anotar, Anotada.
+TEXTO: Por eso anotar la tarea pendiente, aunque no la resuelvas todavía, le alcanza a tu cerebro para soltarla un poco. Contame en los comentarios qué tarea sin cerrar te sigue rondando a vos, dale like si te sirvió, y quédate suscrito si querés entender mejor por qué tu cabeza funciona así.

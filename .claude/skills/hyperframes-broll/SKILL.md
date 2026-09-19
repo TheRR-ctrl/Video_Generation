@@ -32,8 +32,16 @@ datos. Para un plano fotorrealista concreto, sigue siendo un modelo generativo.
 
 ## El módulo de este repo
 
-`hyperframes_broll.py` (idéntico en `video-scout-pipeline` y `Video_Generation`
-— si lo tocas en uno, cópialo al otro).
+`hyperframes_broll.py`.
+
+> **Nota de este repo.** Esta skill llegó desde `video-scout-pipeline`, donde
+> `hyperframes_broll.py` compone un clip por escena con `PerfilVisual` y
+> duración exacta. En `video_generation` el módulo divergió: genera el HTML de
+> varias escenas en **una sola llamada** a Gemini
+> (`generar_clips_lote_cacheados`, `tam_lote_hyperframes`) para no agotar la
+> cuota diaria de texto, y no tiene `PerfilVisual` ni `duracion_seg`. El
+> contrato de composición, las reglas de determinismo, los comandos del CLI y
+> los fallos típicos de más abajo valen igual en los dos.
 
 ```python
 generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=..., reintentos=3,

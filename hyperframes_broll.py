@@ -1,85 +1,109 @@
 """
-HyperFrames B-roll — genera video de apoyo como una *composición HTML*
-(HTML + CSS + GSAP) y la renderiza a MP4 determinista con el CLI de
-HyperFrames (https://hyperframes.heygen.com, Apache-2.0).
+HyperFrames B-roll — segunda alternativa a veo_broll.py (junto a
+manim_broll.py). Genera el video de apoyo de cada escena pidiéndole a Gemini
+el HTML de una composición de HyperFrames (https://github.com/heygen-com/hyperframes:
+HTML + CSS + GSAP -> mp4 determinista vía Chrome headless) en vez de un video
+fotorrealista con Veo.
 
-Idea (la misma que manim_broll.py, pero con la web como motor gráfico): en vez
-de pedirle un video a un modelo generativo, le pedimos a Gemini el *código* de
-una animación y la renderizamos localmente. HyperFrames toma un `index.html`
-normal y, en vez de reproducirlo, le pide al navegador un frame concreto a la
-vez (`seek(0)`, `seek(1/30)`, ...) con Chrome headless en modo determinista, y
-encadena los frames con ffmpeg. Nunca llama a `play()`, así que el resultado no
-depende de la velocidad de la máquina: mismo HTML -> mismo MP4.
+Frente a Manim: HyperFrames encaja mejor para motion graphics tipo "anuncio"
+(texto kinético, transiciones, formas simples animadas con easings
+declarativos) que para geometría/matemática exacta, donde Manim es más
+natural. Mismo trato que veo_broll/manim_broll: gratis, determinista,
+cacheado por prompt en pipeline_state/hyperframes_cache/.
 
-Frente a los otros motores de video de apoyo de estos pipelines:
+Requiere: Node.js 22+, ffmpeg en el PATH. No requiere instalar el paquete
+`hyperframes` de antemano: se invoca con `npx hyperframes@<version>`, pinneado
+para que el render sea reproducible en el tiempo.
 
-| | veo | manim | hyperframes |
-|---|---|---|---|
-| Costo | de pago | gratis | gratis |
-| Velocidad | minutos/clip | ~1 min/clip | ~3x tiempo real |
-| Duración del clip | fija (~8 s) | fija (~8 s) | **exacta**, la que se pida |
-| Estilo | fotorrealista | vectorial matemático | tipografía/diseño web |
-| Assets propios | no hace falta | no hace falta | no hace falta |
-
-## Módulo portable
-
-Este archivo no depende de ningún otro del repo: se copia tal cual entre
-proyectos. Lo único que cambia entre pipelines es el `PerfilVisual` — qué se
-está ilustrando, qué se superpone encima y qué zonas del cuadro hay que dejar
-libres. Hay dos perfiles listos abajo; añadir uno nuevo es rellenar un
-dataclass, no tocar el motor.
-
-Requiere: Node.js >= 22 (para `npx`), ffmpeg/ffprobe en el PATH.
-Credenciales: GEMINI_API_KEY. El render de HyperFrames es local: no consume
-créditos de HeyGen ni pide cuenta.
+Credenciales: GEMINI_API_KEY (mismo que el resto del pipeline).
 """
 import os
 import re
 import sys
-import time
+import platform
 import json
-import math
+import glob
 import shutil
 import hashlib
 import logging
 import tempfile
-import platform
 import subprocess
-from dataclasses import dataclass
 
 from google import genai
-from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
-# Versión fijada del CLI: HyperFrames se mueve rápido y una corrida desatendida
-# no debería cambiar de motor de render sin que lo decidas. Súbela a mano.
-VERSION_CLI = "0.8.29"
+import gemini_utils
+import plantillas_broll
+import archivos
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CARPETA_ESTADO = os.path.join(BASE_DIR, "pipeline_state")
+VERSION_CLI = "0.8.27"
+# La capa gratuita de Gemini limita las solicitudes de generate_content por
+# día (no solo por minuto): pedir el HTML de varias escenas en una sola
+# llamada, en vez de una llamada por escena, es lo que hace viable generar
+# un video completo (20+ escenas) sin agotar esa cuota. Ver TAM_LOTE_DEFAULT.
+TAM_LOTE_DEFAULT = 5
+
+# Cómo se escribe el HTML de cada composición:
+#   "plantillas" -> lo dibuja plantillas_broll.py. Sin API, sin costo, sin
+#                   reintentos, y con continuidad entre planos por construcción.
+#   "gemini"     -> se lo pide al modelo, como antes.
+# El default son las plantillas: el modelo no aportaba nada que un diagrama de
+# barras necesite, y sí aportaba costo, latencia y fallos (rótulos inventados,
+# gráficas que contradecían la narración, cuadros vacíos).
+MOTOR_COMPOSICION_DEFAULT = "plantillas"
+_motor_composicion = MOTOR_COMPOSICION_DEFAULT
+
+
+def configurar_motor_composicion(motor):
+    global _motor_composicion
+    _motor_composicion = motor if motor in ("plantillas", "gemini") else MOTOR_COMPOSICION_DEFAULT
+    return _motor_composicion
+CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
-
-FPS = 30
-TIMEOUT_RENDER_SEG = 900
-TIMEOUT_LINT_SEG = 120
-DURACION_DEFAULT_SEG = 8.0
-# Se renderiza un poco más largo de lo pedido: quien consume el clip lo recorta
-# con ffmpeg, y así un desfase de décimas nunca deja el final en negro.
-MARGEN_DURACION_SEG = 0.6
-# El render va a ~3x tiempo real, así que una composición muy larga bloquea el
-# lote. Por encima de esto, el llamador debe loopear un clip más corto.
-DURACION_MAX_SEG = 120.0
-
-# Tope de la caché de clips. Cada MP4 de 1080p ronda los 2-6 MB y la clave
-# incluye el prompt, así que sin poda la carpeta crece sin fin — y en un
-# teléfono el disco se acaba mucho antes que las ganas de generar fondos.
-# Cuando se pasa, se borran los menos usados recientemente hasta volver bajo
-# el tope (a un clip borrado le cuesta un render volver, no es una pérdida).
+# Tope de la caché de clips. La clave lleva el prompt dentro, así que cada
+# plano nuevo añade un archivo y ninguno se borra solo; el workflow además la
+# conserva entre corridas. Cuando se pasa, se borran los menos usados
+# recientemente: a un clip borrado le cuesta un render volver, no es una
+# pérdida.
 CACHE_MAX_MB = 600.0
-
-# Cambiar la plantilla del prompt cambia el resultado para el mismo
-# prompt_visual, así que la versión entra en la clave de caché.
-VERSION_PROMPT = 2
+RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
+# Sub-composición del catálogo oficial de HyperFrames (registry/components/
+# chart-story), vendorizada tal cual: construye una gráfica (barras/línea/
+# donut/progreso) animada y determinista a partir de datos exactos, en vez de
+# dejar que Gemini invente su propia animación de datos desde cero. Se ofrece
+# como opción en el prompt de sistema para escenas de comparación de datos.
+RUTA_CHART_STORY_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "chart-story.html")
+# Un clip cubre ahora un PLANO, no una escena entera: la escena narra 15-25s y
+# se reparte entre 3 y 5 planos (ver script_writer.py), o sea 4-6s cada uno.
+# Antes eran 18s, el largo de la escena completa, porque había un solo dibujo
+# por escena. Dejarlo en 18 haría que en su tramo de 5s solo se viera el
+# armado del diagrama y nunca el diagrama entero.
+DURACION_ESCENA_SEG = 6
+# Momento en que el diagrama tiene que estar armado del todo (ver _PROMPT_SISTEMA):
+# a partir de ahí ya nada aparece ni desaparece, para que el clip se entienda
+# entrando en cualquier segundo del bucle.
+_SEGUNDO_DIAGRAMA_COMPLETO = int(DURACION_ESCENA_SEG * 0.4)
+# Instantes en que se comprueba que el clip muestre algo (ver
+# _clip_tiene_contenido): todos posteriores a _SEGUNDO_DIAGRAMA_COMPLETO, que es
+# a partir de cuándo el diagrama tiene que estar armado y sostenerse.
+INSTANTES_MUESTRA_CONTENIDO = (
+    DURACION_ESCENA_SEG * 0.5, DURACION_ESCENA_SEG * 0.7, DURACION_ESCENA_SEG * 0.95,
+)
+# Un píxel cuenta como "encendido" a partir de esta luminancia (0-255): el fondo
+# #0b0f14 mide ~14, así que 40 lo deja fuera con margen.
+LUMINANCIA_MINIMA_CONTENIDO = 40
+# Porción del cuadro que tiene que estar encendida para considerar que hay un
+# diagrama. Medido sobre los clips reales: los que dibujan algo ocupan 2.7% o
+# más, y los que solo tienen un título flotando llegan a 1.5%.
+COBERTURA_MINIMA_CONTENIDO = 0.02
+# Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
+# `npx hyperframes@version` tiene que descargar el paquete completo (incluye
+# un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
+# tarda ~20-30s (ver prueba local); esto solo cubre ese arranque en frío.
+TIMEOUT_RENDER_SEG = 600
+# El linter no abre navegador; el margen cubre el arranque en frío de npx.
+TIMEOUT_LINT_SEG = 180
 
 RESOLUCIONES = {
     "16:9": (1920, 1080),
@@ -88,228 +112,232 @@ RESOLUCIONES = {
 }
 
 
-# ---------------------------------------------------------
-# PERFILES VISUALES (lo único específico de cada pipeline)
-# ---------------------------------------------------------
-@dataclass(frozen=True)
-class PerfilVisual:
-    """Describe qué tipo de video de apoyo se quiere y qué se le superpone.
+def _escala_chart_story(ancho, alto):
+    """Trozo de CSS extra para el div de chart-story, o cadena vacía.
 
-    `nombre` entra en la clave de caché, así que cambiarlo fuerza a regenerar."""
-    nombre: str
-    contexto: str          # qué ilustra la composición y qué va encima
-    direccion_arte: str    # paleta, ritmo, tono
-    zonas_libres: str      # dónde no puede haber nada importante
-    max_palabras_pantalla: int
-    loopable: bool = False  # ¿el clip se va a repetir para cubrir más tiempo?
+    Existe para documentar por qué NO se escala. chart-story dimensiona su
+    gráfica a partir del ANCHO de la caja, no del alto: en vertical queda en
+    unos 480px —el 25% del cuadro— por más alto que se le dé. Escalarla parecía
+    la salida, pero sus rótulos van pegados a los extremos del eje: medido, con
+    1.2 "Tension" ya se sale por el borde izquierdo y con 1.35 el dibujo llega
+    al 98% del ancho. El hueco de arriba se llena con un rótulo propio de la
+    composición (ver la regla en el prompt), no estirando la gráfica."""
+    return ""
 
 
-PERFIL_NARRACION_REFLEXIVA = PerfilVisual(
-    nombre="narracion_reflexiva",
-    contexto=(
-        "Video de apoyo (b-roll) de UNA escena de un video largo narrado de "
-        "psicología / desarrollo personal en español. La locución va en otra "
-        "pista y los subtítulos karaoke se queman encima después: la "
-        "composición es PURAMENTE VISUAL y MUDA."
-    ),
-    direccion_arte=(
-        "- Fondo oscuro profundo (#080B10 - #12161D) con un degradado sutil; "
-        "nada de blanco puro de fondo.\n"
-        "- Paleta de acento fría y sobria, 2 colores como máximo (p. ej. "
-        '"#7C9CFF", "#4ADE9B", "#F2C14E"). Editorial y calmado, no infantil '
-        "ni \"startup\".\n"
-        "- Movimiento lento y continuo: derivas, escalas suaves, parallax, "
-        "líneas que se dibujan, formas geométricas grandes, degradados que "
-        "respiran. Easing `power2.out` / `power3.inOut`. Nada rebota ni "
-        "parpadea.\n"
-        "- Nunca se queda quieto: siempre hay algo moviéndose despacio.\n"
-        "- Metáfora visual abstracta del tema, nunca ilustración literal: sin "
-        "caras, sin figuras humanas reconocibles, sin logos ni marcas."
-    ),
-    zonas_libres=(
-        "- **25% inferior**: ahí van los subtítulos karaoke. Nada importante "
-        "ni brillante en esa banda.\n"
-        "- **30% superior**: en la primera escena va la tarjeta de título."
-    ),
-    max_palabras_pantalla=3,
-)
+def _alto_dibujable(ancho, alto):
+    """Hasta qué altura puede dibujar la composición, en píxeles.
 
+    En horizontal se reserva el 22% de abajo para los subtítulos quemados.
 
-PERFIL_HISTORIA_VERTICAL = PerfilVisual(
-    nombre="historia_vertical",
-    contexto=(
-        "Fondo de un Short vertical en español: una historia personal narrada "
-        "(drama, venganza, suspenso o comedia) con subtítulos karaoke grandes "
-        "sobre el video. El fondo NO cuenta la historia, solo sostiene la "
-        "atención mientras se escucha. Es PURAMENTE VISUAL y MUDO."
-    ),
-    direccion_arte=(
-        "- Fondo oscuro (#07090D - #14181F) con un degradado o viñeta que "
-        "empuja la mirada al centro.\n"
-        "- Un solo color de acento saturado según el tono de la historia "
-        '(p. ej. "#FF5C7A" tensión, "#7C9CFF" melancolía, "#4ADE9B" giro '
-        "favorable). Textura sutil de grano o ruido estático, sin exagerar.\n"
-        "- Movimiento hipnótico y constante de ritmo medio: patrones que se "
-        "desplazan, formas que rotan despacio, ondas, cuadrículas en "
-        "perspectiva, partículas grandes a la deriva. Es un fondo tipo "
-        '\"satisfying loop\", no una animación con guion.\n'
-        "- Nunca se detiene y nunca cambia de escena bruscamente: sin cortes, "
-        "sin flashes, sin nada que compita con los subtítulos.\n"
-        "- Abstracto siempre: sin caras, sin figuras humanas, sin logos, sin "
-        "texto que pueda leerse como parte de la historia."
-    ),
-    zonas_libres=(
-        "- **Franja central (del 30% al 75% de altura)**: ahí van los "
-        "subtítulos karaoke, que son grandes. Deja esa zona oscura y sin "
-        "detalle fino ni elementos brillantes.\n"
-        "- **20% superior**: ahí va la tarjeta de título del hook."
-    ),
-    max_palabras_pantalla=0,
-    loopable=True,
-)
+    En vertical el reparto es: diagrama arriba, subtítulo debajo (~61-70% del
+    alto) y el último 30% libre para la interfaz de Shorts y de TikTok, que tapa
+    ahí el título, el usuario y los botones. El primer intento le daba al
+    diagrama solo el 44% y dejaba 883px muertos entre el subtítulo y el borde
+    inferior; el 56% llena el cuadro hasta donde empieza lo que de verdad queda
+    tapado."""
+    return int(alto * (0.56 if alto > ancho else 0.78))
 
+_PROMPT_SISTEMA = """Eres un generador de composiciones de HyperFrames (HTML + CSS + GSAP
+-> video, ver hyperframes.heygen.com) para motion graphics estilo "explicador
+visual minimalista" (grid neón sobre fondo oscuro, formas simples, texto
+tipográfico, transiciones con easings suaves — el estilo de canales de
+divulgación en TikTok/Shorts).
 
-# El mismo fondo de historia, pero para el formato horizontal. Existe porque
-# los dos perfiles de arriba no sirven tal cual: el vertical deja libre la
-# franja central (donde van los subtítulos de un Short) y en 16:9 los
-# subtítulos van abajo, así que lo interesante acabaría justo debajo del
-# texto; y el reflexivo, que sí tiene las zonas libres correctas, no es
-# cíclico, porque está pensado para una escena de largo exacto. Este pipeline
-# siempre loopea el fondo para cubrir la historia, así que necesita las zonas
-# del horizontal y el bucle cerrado a la vez.
-PERFIL_HISTORIA_HORIZONTAL = PerfilVisual(
-    nombre="historia_horizontal",
-    contexto=(
-        "Fondo de un video horizontal en español: una historia personal "
-        "narrada (drama, venganza, suspenso o comedia) con subtítulos karaoke "
-        "quemados encima. El fondo NO cuenta la historia, solo sostiene la "
-        "atención mientras se escucha. Es PURAMENTE VISUAL y MUDO."
-    ),
-    direccion_arte=PERFIL_HISTORIA_VERTICAL.direccion_arte,
-    zonas_libres=(
-        "- **25% inferior**: ahí van los subtítulos karaoke. Nada importante "
-        "ni brillante en esa banda.\n"
-        "- **30% superior**: ahí va la tarjeta de título del hook."
-    ),
-    max_palabras_pantalla=0,
-    loopable=True,
-)
+Reglas estrictas del contrato de HyperFrames (romperlas invalida el render):
+- Responde ÚNICAMENTE con el HTML completo del archivo, empezando en
+  "<!doctype html>". Sin explicaciones, sin markdown, sin texto antes o después.
+- `<script src="gsap.min.js"></script>` en el <head> (SIEMPRE esa ruta
+  relativa exacta — NUNCA un CDN ni otra URL, el archivo se copia local).
+- No cargues ninguna otra URL externa (fuentes, imágenes, CDNs): tiene que
+  renderizar sin red.
+- El elemento raíz debe tener `id="root"`, `data-composition-id="main"`,
+  `data-start="0"`, `data-duration="{duracion}"`, `data-width="{ancho}"`,
+  `data-height="{alto}"`.
+- Cada elemento animado dentro necesita `class="clip"`, `data-start` y
+  `data-duration` (en segundos, dentro del rango de la composición).
+- El timeline de GSAP debe crearse pausado y registrarse así (obligatorio,
+  al final de un <script> inline):
+    window.__timelines = window.__timelines || {{}};
+    window.__timelines["main"] = tl;  // tl = gsap.timeline({{ paused: true }})
+- Fondo oscuro (#0b0f14), colores neón para los elementos principales
+  (verdes/rosas/celestes saturados: #00e28a, #ff2d78, #3da9fc), formas con
+  SVG o divs, tipografía del sistema (no importes fuentes web).
+- DETERMINISMO. El render no reproduce el video: le pide a Chrome frames
+  sueltos y fuera de orden, y lo que se vea en el segundo T tiene que depender
+  solo de T. Si algo "avanza solo", sale congelado o a saltos. Prohibido:
+    * `Date`, `Date.now()`, `performance.now()`, `Math.random()`.
+    * `requestAnimationFrame`, `setTimeout`, `setInterval`.
+    * `repeat: -1` en GSAP y `animation: ... infinite` en CSS.
+  Toda la animación va en la timeline pausada, que es lo único que el
+  compositor sabe recorrer.
+- NUNCA pongas en el CSS de un elemento un `transform` (scale, translate,
+  rotate) si después GSAP le anima alguna de esas propiedades: GSAP reescribe
+  el transform entero y se lleva puesto lo que había en el CSS — un
+  `translateX(-50%)` de centrado desaparece y el elemento salta de lugar. El
+  valor inicial va en el `fromTo` de GSAP, no en el CSS. En vez de
+  `.caja {{ transform: scale(0.8); }}` + `tl.to('.caja', {{ scale: 1 }})`, escribí
+  `tl.fromTo('.caja', {{ scale: 0.8 }}, {{ scale: 1 }})`. Para centrar sin
+  transform, usá flex o `inset:0; margin:auto`.
 
+Reglas de composición (el clip NO se ve solo: encima lleva narración y
+subtítulos quemados, así que romperlas arruina el video aunque el render
+funcione):
+- Solo podés dibujar en los primeros {alto_libre}px de alto del cuadro. Lo de
+  abajo va reservado: ahí caen los subtítulos quemados y, en vertical, además la
+  interfaz de Shorts y TikTok. No pongas ningún elemento visible fuera de esa
+  zona; centrá la composición dentro de ella.
+- Todo texto en pantalla va EN ESPAÑOL y tiene que salir del contenido de la
+  escena que se te describe: las palabras que la escena lista como "Etiquetas:",
+  una frase corta que ya esté en esa descripción, o un número que aparezca ahí.
+  Nada de rótulos decorativos inventados (nada de "MORNING FOCUS", "THE
+  CROSSING", "SYNAPSE"): el espectador está escuchando otra cosa y un texto que
+  no corresponde se lee como un error.
+- Pero los rótulos que SÍ informan son obligatorios: si el dibujo compara, mide,
+  ordena o descompone algo, cada elemento que representa una cosa lleva su
+  etiqueta al lado (y su número, si la escena trae "Datos:"). Dos barras sin
+  rótulo no comunican nada. Omitir texto solo es correcto cuando el dibujo no
+  representa cantidades ni partes nombradas.
+- Usá TODO el alto disponible ({alto_libre}px), no solo la parte de arriba. Una
+  composición que ocupa el tercio superior y deja el resto en negro se ve a
+  medio hacer: el cuadro tiene que sentirse lleno hasta donde llega la zona
+  dibujable.
+- No hay narración dentro del clip: el video es puramente visual, de
+  {duracion} segundos.
 
-_PLANTILLA_PROMPT = """Eres un generador de composiciones HTML para HyperFrames, un motor
-que renderiza HTML a video MP4 frame a frame con Chrome headless.
+Lo que se te pide es UN PLANO de una escena, no la escena entera: la escena se
+reparte entre varios planos que se turnan mientras la locución sigue de
+corrido, y el tuyo ocupa unos segundos. Se reproduce en bucle dentro de su
+tramo, así que cualquier instante en que el cuadro quede vacío o a medio
+dibujar se ve como un error de reproducción. Por eso:
+- El primer elemento aparece dentro del primer medio segundo: nunca arranques
+  con el cuadro en negro.
+- El diagrama tiene que estar COMPLETO (todos sus elementos y todos sus
+  rótulos a la vista) antes del 40% de la duración, o sea antes del segundo
+  {segundo_completo}.
+- A partir de ahí NADA desaparece: no le pongas fade-out, ni `autoAlpha: 0` al
+  final, ni un `data-duration` que termine antes que la composición. Todos los
+  elementos llegan visibles al último frame. El movimiento del tramo final es
+  sutil (un pulso, un acento de color, una flecha que recorre el diagrama ya
+  armado), nunca desarmarlo.
 
-{CONTEXTO}
+PRUEBA QUE TIENE QUE PASAR TU COMPOSICIÓN (es el criterio de calidad, por
+encima de lo bonita que quede): alguien que ve el clip SIN audio, entrando en
+CUALQUIER segundo del clip, tiene que entender la idea de la escena. Una sola forma que pulsa, gira o late; un
+cuadrado de color; una línea que cruza una elipse: todo eso reprueba, es
+decoración. Aprueba un dibujo con al menos dos elementos rotulados y una
+relación visible entre ellos (uno más grande que otro, uno que se convierte en
+otro, tres que se encadenan en ciclo, una parte destacada del total). Si lo que
+se te describe te parece abstracto, tu trabajo es encontrarle la forma medible,
+no dibujar la abstracción tal cual.
 
-Responde ÚNICAMENTE con el archivo HTML completo. Sin explicaciones, sin ```.
+La escena que se te describe empieza con su arquetipo entre corchetes; dibujalo
+así:
+- [comparacion] -> barras enfrentadas, rotuladas. Usá `chart-story` (abajo).
+- [proporcion]  -> dona o barra de progreso con la porción resaltada. `chart-story`.
+- [evolucion]   -> línea que avanza en el tiempo, con el punto clave marcado. `chart-story`.
+- [proceso]     -> cajas o círculos rotulados unidos por flechas que se dibujan
+                   una tras otra; si es un ciclo, la última vuelve a la primera.
+- [estructura]  -> un elemento central que se abre en sus partes rotuladas.
+- [metafora]    -> única categoría sin datos; aun así, dos elementos y una
+                   relación clara entre ellos (nunca una forma sola).
 
-## Contrato de HyperFrames (obligatorio)
+Si la escena trae "Datos:" (o es una COMPARACIÓN DE DATOS/NÚMEROS: tamaños,
+distancias, temperaturas, duraciones, cantidades — p. ej. "la Tierra cabe 1300
+veces dentro de Júpiter"), NO inventes tu propia gráfica animada: usá la
+sub-composición ya construida `compositions/chart-story.html` (ya está ahí, al
+lado de tu HTML), pasándole esos números y esas etiquetas tal cual, así:
 
-- Documento HTML completo, empezando por `<!doctype html>`.
-- Carga GSAP con exactamente esta etiqueta:
-  `<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>`
-- El elemento raíz debe ser:
-  `<div id="root" data-composition-id="main" data-start="0" data-duration="{DURACION}" data-width="{ANCHO}" data-height="{ALTO}">`
-  con `position: relative; width: {ANCHO}px; height: {ALTO}px; overflow: hidden;`.
-- `data-duration` de la raíz vale EXACTAMENTE {DURACION}. No lo cambies.
-- Cada bloque visible es una `<section class="clip" id="...">` con `data-start`
-  y `data-duration` en segundos, dentro de la ventana [0, {DURACION}].
-  Regla `.clip {{ position: absolute; inset: 0; }}`.
-- Crea UNA sola línea de tiempo GSAP, pausada, y regístrala de forma síncrona:
-  ```
-  window.__timelines = window.__timelines || {{}};
-  const tl = gsap.timeline({{ paused: true }});
-  // ... tweens ...
-  window.__timelines.main = tl;
-  ```
-- La animación debe durar {DURACION} segundos: encadena los tweens para llenar
-  ese tiempo (usa posiciones absolutas en la timeline, p. ej. `tl.to(x, {{...}}, 2.4)`).
+    <div id="grafica" data-composition-id="chart-story"
+         data-composition-src="compositions/chart-story.html"
+         data-variable-values='{{"type":"bars","data":"1,1300","labels":"Tierra,Júpiter","emphasize":1,"unit":"x","accent":"blue"}}'
+         data-start="0" data-duration="{duracion}" data-track-index="0"
+         data-width="{ancho}" data-height="{alto_libre}"
+         style="position:absolute;left:0;top:0;width:{ancho}px;height:{alto_libre}px{escala_chart}"></div>
 
-## Determinismo (el render pide frames sueltos, no reproduce)
+Copiá ese `data-height` y ese `style` tal cual: la gráfica arma su propia
+maqueta (ejes, rótulos y leyenda al pie) dentro de la caja que le des, así que
+si le pasás el alto completo del cuadro su leyenda cae justo donde van los
+subtítulos. Acotándola a {alto_libre}px queda entera en la zona libre.
 
-- Nada de `Date`, `performance.now()`, `Math.random()` sin semilla,
-  `requestAnimationFrame`, `setTimeout`, `setInterval`, `repeat: -1` ni
-  animaciones CSS infinitas. El estado visual en el segundo T debe depender
-  solo de T.
-- Nada de `<video>`, `<audio>`, `<canvas>` con WebGL, ni imágenes externas.
-- Sin peticiones de red salvo el `<script>` de GSAP indicado arriba.
-- Fuentes: solo la pila del sistema
-  `font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;`.
+En VERTICAL, chart-story ocupa solo un cuarto del alto —su tamaño lo fija el
+ancho de la caja, no el alto— y encima queda un hueco. No la estires: sus
+rótulos van pegados a los extremos del eje y se salen del cuadro. Llená ese
+hueco con un rótulo grande TUYO encima de la gráfica, con la etiqueta principal
+de la escena o la cifra que se está comparando, que además ancla lo que la
+gráfica muestra.
 
-## Dirección de arte
+Las `labels` de chart-story van CORTAS, de una o dos palabras (12 caracteres
+como mucho cada una): van en la leyenda al pie, en una sola línea, y con
+etiquetas largas se encabalgan entre sí y quedan ilegibles. Si tu etiqueta
+natural es larga, acortala ("Resistencia superada" -> "Superada").
 
-{DIRECCION_ARTE}
+Ese `<div>` va DENTRO de tu `#root` normal (junto a cualquier otro elemento
+de la escena). `type` puede ser "bars", "line", "donut" o "progress"; `data`
+son los números reales separados por coma (se muestran exactos, sin
+redondear); `emphasize` es el índice del dato a resaltar; `accent` es
+"green", "blue" o "violet". No declares tú mismo un timeline para esta
+sub-composición ni le pongas `class="clip"` — ella ya trae su propia
+animación y su propio registro en window.__timelines["chart-story"].
 
-## Zonas del cuadro que deben quedar libres
+`labels` son exactamente las etiquetas que la escena te dio (en español, en el
+mismo orden que los números) y `data` los números tal cual: no los redondees ni
+los sustituyas por valores propios. Si la escena dice "Etiquetas: Nivel normal,
+Intentar calmarse", esas dos van en `labels`; poner "Nivel 100" y "Nivel 0"
+—rótulos tuyos— deja la gráfica hablando de otra cosa que la narración.
 
-{ZONAS_LIBRES}
+Y el SENTIDO de los datos tiene que coincidir con lo que se está narrando: si la
+escena dice que algo se duplica o crece, el valor destacado va MÁS ALTO que el
+otro. Una línea que baja mientras la voz dice que el estrés sube es peor que no
+poner gráfica: el espectador ve que el video se contradice.
 
-## Texto en pantalla
-
-{REGLA_TEXTO}
-
-## Principio y final
-
-{REGLA_BUCLE}
+Si la escena NO trae "Datos:", podés usar `chart-story` igual con magnitudes
+relativas que reflejen lo que dice la narración (p. ej. "3,1" para "pesa el
+triple"), pero en ese caso `unit` va VACÍO. Poniendo "%" a un número que
+inventaste, la gráfica afirma un dato falso: "20%" y "95%" se leen como cifras
+reales aunque solo quisieras mostrar que una sube más que la otra.
 """
 
-_REGLA_TEXTO_SIN_TEXTO = (
-    "**Ninguna palabra en pantalla.** Los subtítulos de la narración se queman "
-    "encima después; cualquier texto de la composición compite con ellos."
-)
-_REGLA_TEXTO_CON_LIMITE = (
-    "**Como mucho {N} palabras en toda la composición, o ninguna.** Los "
-    "subtítulos de la narración se queman encima después; más texto compite "
-    "con ellos y con la locución."
-)
+_PROMPT_SISTEMA_LOTE = _PROMPT_SISTEMA + """
+Vas a generar {n} composiciones distintas, una por cada escena listada abajo
+(cada una es un video independiente, no una sola composición larga).
 
-_REGLA_BUCLE_CERRADO = (
-    "El clip se va a repetir en bucle para cubrir toda la narración, así que "
-    "**el último frame debe encajar con el primero**: que el estado visual en "
-    "el segundo {DURACION} sea prácticamente el mismo que en el segundo 0 "
-    "(mismas posiciones, mismas opacidades, misma escala), para que el corte "
-    "del bucle no se vea. Diseña el movimiento como un ciclo completo: una "
-    "vuelta entera, un desplazamiento de exactamente un patrón, una onda que "
-    "vuelve a su fase inicial."
-)
-_REGLA_BUCLE_ABIERTO = (
-    "Empieza y termina en un estado compuesto: ni en negro ni a medio fundido. "
-    "El clip dura exactamente lo que la escena, así que no hace falta que el "
-    "final enlace con el principio."
-)
+Responde ÚNICAMENTE con un array JSON de exactamente {n} strings, en el
+mismo orden que las escenas. Cada string es el HTML completo de una
+composición (empezando literalmente en "<!doctype html>"). Sin texto antes
+o después del array, sin markdown.
+"""
+
+# Se agrega al prompt del lote (ya formateado) cuando todas las composiciones
+# del lote son planos consecutivos de una misma escena, es decir de una misma
+# locución. Sin esto cada plano se inventa su propia maqueta —otro encuadre,
+# otras posiciones, otra paleta— y la escena se ve como tres láminas sueltas en
+# vez de una idea que avanza. No lleva marcadores de formato: se concatena
+# después del .format().
+CONTINUIDAD_ENTRE_PLANOS = """
+IMPORTANTE — CONTINUIDAD: todas las composiciones de esta tanda son planos
+consecutivos de UNA MISMA escena, acompañando una sola locución continua. El
+espectador las ve encadenadas, sin corte de tema. Tratalas como una sola
+maqueta que evoluciona, no como dibujos independientes:
+
+- Misma paleta exacta (mismos valores hex de fondo, texto y acentos) en todas.
+- Mismo fondo y mismo encuadre: si el plano 1 tiene el título arriba y el
+  diagrama centrado, los demás mantienen esas mismas zonas y márgenes.
+- Los elementos que se repiten entre planos conservan su posición, su tamaño y
+  su etiqueta literal: si algo se llama "Ahorro" y está a la izquierda en el
+  plano 1, sigue llamándose "Ahorro" y sigue a la izquierda en el plano 2.
+- Misma tipografía y mismos tamaños de fuente para el mismo nivel jerárquico.
+- Entre un plano y el siguiente cambia SOLO lo que el avance de la idea pide:
+  se agrega un elemento, se resalta otro, avanza una cifra. Todo lo demás queda
+  igual.
+- No repitas el mismo plano dos veces: cada uno tiene que aportar algo nuevo,
+  pero partiendo de donde quedó el anterior.
+"""
 
 
 logger = logging.getLogger("hyperframes_broll")
 
 _client = None
-_cmd_cli = None
-
-
-# ---------------------------------------------------------
-# LLAMADA A GEMINI
-# ---------------------------------------------------------
-_RE_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
-
-
-def _llamar_con_reintentos(fn, *args, reintentos=3, espera_base_seg=20.0, **kwargs):
-    """Reintenta en 429 (RESOURCE_EXHAUSTED) respetando el `retryDelay` que
-    sugiere la propia API. Duplicado a propósito del `gemini_utils` de los
-    pipelines: este módulo se copia entre repos y no debe arrastrar imports."""
-    for intento in range(1, reintentos + 1):
-        try:
-            return fn(*args, **kwargs)
-        except genai_errors.APIError as exc:
-            es_cuota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
-            if not es_cuota or intento == reintentos:
-                raise
-            m = _RE_RETRY_DELAY.search(str(exc))
-            espera = float(m.group(1)) + 1.0 if m else espera_base_seg * intento
-            logger.warning(
-                f"Cuota excedida (intento {intento}/{reintentos}), "
-                f"reintentando en {espera:.0f}s..."
-            )
-            time.sleep(espera)
-    return None  # inalcanzable
 
 
 def _obtener_cliente():
@@ -319,43 +347,112 @@ def _obtener_cliente():
     return _client
 
 
-# ---------------------------------------------------------
-# CLI DE HYPERFRAMES
-# ---------------------------------------------------------
-def _entorno_cli():
-    """Entorno para el CLI: sin telemetría ni chequeo de actualizaciones, que
-    en una corrida desatendida solo añaden latencia y llamadas de red."""
-    env = dict(os.environ)
-    env["HYPERFRAMES_NO_TELEMETRY"] = "1"
-    env["DO_NOT_TRACK"] = "1"
-    env["HYPERFRAMES_NO_UPDATE_CHECK"] = "1"
-    env["HYPERFRAMES_SKIP_SKILLS"] = "1"
-    env["CI"] = env.get("CI", "1")
-    return env
+def _version_instrucciones():
+    """Huella de las instrucciones de dibujo vigentes, para la clave de caché.
+
+    El prompt de sistema decide cómo se ve el clip tanto como la descripción de
+    la escena. Sin esto, mejorar las reglas de dibujo no cambia nada en el video
+    siguiente: la caché entre corridas devuelve los clips hechos con las reglas
+    viejas, y la corrida "termina bien" sin haber aplicado el cambio.
+
+    Entra también el bloque de continuidad: cambia el dibujo de cada plano
+    igual que las reglas base, y sin él en la huella los planos cacheados
+    seguirían siendo los sueltos de antes."""
+    if _motor_composicion == "plantillas":
+        # Con plantillas el dibujo no depende del prompt de sistema sino del
+        # código que lo genera: la huella es la del módulo, para que al mejorar
+        # una plantilla no se reutilicen los clips dibujados con la anterior.
+        with open(plantillas_broll.__file__, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:8]
+    huella = _PROMPT_SISTEMA + CONTINUIDAD_ENTRE_PLANOS
+    return hashlib.sha256(huella.encode("utf-8")).hexdigest()[:8]
 
 
-def comando_cli():
-    """Prefijo de comando del CLI de HyperFrames.
+def _ruta_cache(prompt_visual, aspecto):
+    # Además del prompt de la escena, entran la duración (un clip armado para
+    # otro largo ya no sirve) y la versión de las instrucciones de dibujo.
+    clave = hashlib.sha256(
+        f"{aspecto}|{DURACION_ESCENA_SEG}|{_motor_composicion}|"
+        f"{_version_instrucciones()}|{prompt_visual}".encode("utf-8")
+    ).hexdigest()[:24]
+    os.makedirs(CARPETA_CACHE, exist_ok=True)
+    return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
 
-    Si hay un binario instalado (`npm i -g hyperframes`) se usa ese; si no, se
-    cae a `npx`, que descarga el paquete la primera vez y luego lo cachea."""
-    global _cmd_cli
-    if _cmd_cli is None:
-        binario = os.environ.get("HYPERFRAMES_BIN") or shutil.which("hyperframes")
-        _cmd_cli = [binario] if binario else ["npx", "-y", f"hyperframes@{VERSION_CLI}"]
-    return list(_cmd_cli)
+
+def _ruta_parcial(ruta_final):
+    """Dónde se escribe un clip antes de que cuente como bueno.
+
+    Oculto y con otra extensión a propósito: mientras se escribe no debe
+    parecerse a un clip terminado, porque una copia a medias tiene el tamaño
+    de un mp4 de verdad y nada la distinguiría después."""
+    carpeta, nombre = os.path.split(ruta_final)
+    return os.path.join(carpeta, f".{nombre}.parcial")
+
+
+def _mapa_escenas(tamanos_escena, total):
+    """Índice de escena al que pertenece cada plano, o None si no se sabe.
+
+    Devolver None (y no {i: i}) es lo que preserva el comportamiento viejo
+    cuando no hay info de escenas: con un mapa de a un plano por escena, los
+    lotes salían de tamaño 1 y una llamada a Gemini por plano, que es
+    exactamente lo que el lote existe para evitar."""
+    if not tamanos_escena:
+        return None
+    mapa, plano = {}, 0
+    for escena, cantidad in enumerate(tamanos_escena):
+        for _ in range(cantidad):
+            if plano < total:
+                mapa[plano] = escena
+            plano += 1
+    for i in range(plano, total):
+        mapa[i] = len(tamanos_escena) + i
+    return mapa
+
+
+def _armar_lotes(pendientes, tam_lote, escena_de):
+    """Parte los planos pendientes en lotes sin cruzar escenas.
+
+    Los planos de una escena viajan juntos para poder pedirlos con continuidad;
+    solo se juntan escenas distintas en un mismo lote cuando entran de a una
+    entera y todavía sobra espacio."""
+    lotes, actual, escena_actual = [], [], None
+    for indice, prompt in pendientes:
+        escena = escena_de.get(indice) if escena_de else None
+        if actual and ((escena_de and escena != escena_actual) or len(actual) >= tam_lote):
+            lotes.append(actual)
+            actual = []
+        actual.append((indice, prompt))
+        escena_actual = escena
+    if actual:
+        lotes.append(actual)
+    return lotes
+
+
+def _bloque_correccion(correccion):
+    """Texto que se le agrega al prompt para que el reintento no repita el error.
+
+    Sin esto el reintento vuelve a pedir la composición a ciegas y suele fallar
+    igual. Con el motivo del fallo delante —y con el fixHint del linter cuando
+    viene de ahí— el modelo corrige el punto concreto."""
+    if not correccion:
+        return ""
+    return (
+        "\n\nATENCIÓN: el intento anterior para esta escena falló por lo "
+        f"siguiente. Corregilo en esta versión:\n{correccion}"
+    )
 
 
 # ---------------------------------------------------------
 # DÓNDE PUEDE CORRER ESTO
 # ---------------------------------------------------------
-# Este motor es de PC, a propósito. El render arranca Chrome headless, y el
+# Traído de la copia del motor que vive en video-scout-pipeline (main, fa537d7).
+# Este motor es de PC, a propósito: el render arranca Chrome headless, y el
 # Chrome que descargan las herramientas de Node está compilado contra glibc;
 # Android usa bionic, así que el binario ni siquiera arranca. Encima harían
 # falta Node >= 22, unos cientos de MB de caché de npx y ~3x tiempo real de
 # CPU sostenida — en un teléfono eso es el proceso muriendo a media tarea.
 #
-# Detectarlo aquí y decirlo claro es mejor que dejar que lo descubra un
+# Detectarlo acá y decirlo claro es mejor que dejar que lo descubra un
 # subprocess que falla a los diez minutos con un error de enlazado. Quien
 # quiera intentarlo igual (proot con glibc, por ejemplo) tiene la salida de
 # emergencia: HYPERFRAMES_FORZAR=1.
@@ -372,21 +469,64 @@ def _es_android():
     return any(os.path.exists(m) for m in _MARCAS_ANDROID)
 
 
+def limpiar_cache(max_mb=None):
+    """Deja la caché por debajo de `max_mb` borrando los clips menos usados.
+
+    De paso se barren los `.parcial` que dejó un render muerto a mitad."""
+    tope_bytes = float(CACHE_MAX_MB if max_mb is None else max_mb) * 1024 * 1024
+    if not os.path.isdir(CARPETA_CACHE):
+        return 0
+
+    borrados, clips = 0, []
+    for nombre in os.listdir(CARPETA_CACHE):
+        ruta = os.path.join(CARPETA_CACHE, nombre)
+        try:
+            if nombre.endswith(".parcial"):
+                # Nadie lo va a terminar: el proceso que lo escribía ya no está.
+                os.remove(ruta)
+                borrados += 1
+                continue
+            if not os.path.isfile(ruta) or not nombre.endswith(".mp4"):
+                continue
+            st = os.stat(ruta)
+            clips.append((st.st_mtime, st.st_size, ruta))
+        except OSError:
+            continue
+
+    total = sum(c[1] for c in clips)
+    if total <= tope_bytes:
+        return borrados
+
+    # Del que hace más tiempo que no se usa al más reciente: cada acierto de
+    # caché toca el archivo, así que mtime es "última vez que sirvió".
+    for _, tam, ruta in sorted(clips):
+        if total <= tope_bytes:
+            break
+        try:
+            os.remove(ruta)
+        except OSError:
+            continue
+        total -= tam
+        borrados += 1
+    if borrados:
+        logger.info(f"Caché de HyperFrames podada: {borrados} archivo(s) fuera.")
+    return borrados
+
+
 def plataforma_apta():
     """(apta, motivo). `motivo` solo tiene sentido cuando no es apta.
 
     Se consulta antes de gastar una llamada a Gemini o un render: el llamador
-    decide si eso es un error del lote o simplemente caer al otro motor."""
+    decide si eso es un error del lote o simplemente caer a otro motor."""
     if os.environ.get("HYPERFRAMES_FORZAR") == "1":
         return True, ""
     if _es_android():
         return False, (
             "El motor 'hyperframes' es solo para PC: el render necesita Chrome "
             "headless (compilado contra glibc, no arranca en Android), Node >= 22 "
-            "y ~3x tiempo real de CPU. Desde el teléfono usa motor_fondo "
-            '"cortes", o genera los fondos en el runner con el workflow '
-            "'Fabricar fondos con IA' y bájalos. Para intentarlo igual: "
-            "HYPERFRAMES_FORZAR=1."
+            "y ~3x tiempo real de CPU. Desde el teléfono usá otro motor gratuito "
+            "(videos, fotos, estoico, curiosidades) o dispará el workflow de "
+            "GitHub Actions. Para intentarlo igual: HYPERFRAMES_FORZAR=1."
         )
     return True, ""
 
@@ -409,147 +549,60 @@ def comprobar_dependencias():
         )
 
 
-# ---------------------------------------------------------
-# GENERACIÓN Y RENDER
-# ---------------------------------------------------------
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
+def entorno_cli():
+    """Entorno para el CLI en corridas desatendidas: sin telemetría, sin
+    comprobación de versión nueva y sin cargar skills. Los nombres de variable
+    son los que documenta el propio CLI; se ponen todos porque han cambiado
+    entre versiones y sobra con que alguna coincida."""
+    env = dict(os.environ)
+    env.update({
+        "HYPERFRAMES_SKIP_SKILLS": "1",
+        "HYPERFRAMES_TELEMETRY_DISABLED": "1",
+        "HYPERFRAMES_NO_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "HYPERFRAMES_NO_UPDATE_CHECK": "1",
+    })
+    return env
 
 
-def _ruta_cache(prompt_visual, aspecto, duracion, perfil):
-    clave = hashlib.sha256(
-        f"v{VERSION_PROMPT}|{perfil.nombre}|{aspecto}|{duracion:.1f}|{prompt_visual}".encode("utf-8")
-    ).hexdigest()[:24]
-    os.makedirs(CARPETA_CACHE, exist_ok=True)
-    return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
+def _hallazgo_del_modelo(hallazgo, directorio):
+    """¿El hallazgo del linter es sobre el HTML que escribió Gemini?
+
+    Todo lo que no sea el index.html del directorio (o sea: las
+    sub-composiciones que ponemos nosotros) es nuestro y el modelo no puede
+    arreglarlo; pasárselo como corrección solo ensucia el reintento. Sin
+    ruta en el hallazgo se asume que sí, para no tragarse errores reales."""
+    ruta = hallazgo.get("file") or hallazgo.get("filePath")
+    if not ruta:
+        return True
+    return os.path.basename(ruta) == "index.html"
 
 
-def _ruta_parcial(ruta_final):
-    """Dónde escribe el render antes de que el clip cuente como bueno.
+def _lint(directorio):
+    """Errores que reporta el linter del CLI, o None si la composición está
+    limpia.
 
-    Oculto y con otra extensión a propósito: mientras se escribe no debe
-    parecerse a un clip de la caché, porque un render a medias tiene el
-    tamaño de un MP4 de verdad y nada lo distinguiría después."""
-    carpeta, nombre = os.path.split(ruta_final)
-    return os.path.join(carpeta, f".{nombre}.parcial")
+    Técnica tomada de la rama claude/video-analysis-generation-1zyqq4, que
+    resolvió el mismo motor en paralelo. `hyperframes lint` no abre navegador y
+    tarda ~1s, contra los 20-30s de un render: atrapa los incumplimientos del
+    contrato (timeline sin registrar, CDN externo, data-duration fuera de rango)
+    antes de pagar un render que iba a fallar igual. Y devuelve un `fixHint` por
+    error, que es lo que se le pasa al modelo en el reintento.
 
-
-def limpiar_cache(max_mb=None):
-    """Deja la caché por debajo de `max_mb` borrando los clips menos usados.
-
-    La clave de caché lleva el prompt dentro, así que cada idea visual nueva
-    añade un archivo y ninguno se borra solo. Con el tope puesto, la carpeta
-    se estabiliza y lo único que se pierde es un render que se puede rehacer.
-
-    De paso se barren los `.parcial` que dejó un render muerto a mitad."""
-    tope_bytes = float(CACHE_MAX_MB if max_mb is None else max_mb) * 1024 * 1024
-    if not os.path.isdir(CARPETA_CACHE):
-        return 0
-
-    borrados = 0
-    clips = []
-    for nombre in os.listdir(CARPETA_CACHE):
-        ruta = os.path.join(CARPETA_CACHE, nombre)
-        try:
-            if nombre.endswith(".parcial"):
-                # Nadie lo va a terminar: el proceso que lo escribía ya no está.
-                os.remove(ruta)
-                borrados += 1
-                continue
-            if not nombre.startswith("hf_") or not os.path.isfile(ruta):
-                continue
-            st = os.stat(ruta)
-            clips.append((st.st_mtime, st.st_size, ruta))
-        except OSError:
-            continue
-
-    total = sum(c[1] for c in clips)
-    if total <= tope_bytes:
-        return borrados
-
-    # Del más viejo al más nuevo. `generar_clip_cacheado` toca el archivo en
-    # cada acierto, así que "viejo" aquí es "hace mucho que no se usa", no
-    # "se generó hace mucho".
-    for _, tam, ruta in sorted(clips):
-        if total <= tope_bytes:
-            break
-        try:
-            os.remove(ruta)
-        except OSError:
-            continue
-        total -= tam
-        borrados += 1
-    if borrados:
-        logger.info(f"Caché de HyperFrames podada: {borrados} archivo(s) fuera.")
-    return borrados
-
-
-def _limpiar_html(texto):
-    """Quita las vallas de markdown que el modelo a veces añade pese al prompt."""
-    texto = (texto or "").strip()
-    texto = re.sub(r'^```(?:html)?\s*', '', texto)
-    texto = re.sub(r'\s*```$', '', texto)
-    return texto.strip()
-
-
-def _construir_prompt_sistema(perfil, duracion, w, h):
-    if perfil.max_palabras_pantalla <= 0:
-        regla_texto = _REGLA_TEXTO_SIN_TEXTO
-    else:
-        regla_texto = _REGLA_TEXTO_CON_LIMITE.format(N=perfil.max_palabras_pantalla)
-
-    regla_bucle = (
-        _REGLA_BUCLE_CERRADO.format(DURACION=f"{duracion:.2f}")
-        if perfil.loopable else _REGLA_BUCLE_ABIERTO
-    )
-
-    return _PLANTILLA_PROMPT.format(
-        CONTEXTO=perfil.contexto,
-        DIRECCION_ARTE=perfil.direccion_arte,
-        ZONAS_LIBRES=perfil.zonas_libres,
-        REGLA_TEXTO=regla_texto,
-        REGLA_BUCLE=regla_bucle,
-        DURACION=f"{duracion:.2f}",
-        ANCHO=w,
-        ALTO=h,
-    )
-
-
-def _generar_html(cliente, prompt_visual, modelo, duracion, w, h, perfil, correccion=None):
-    partes = [
-        _construir_prompt_sistema(perfil, duracion, w, h),
-        "",
-        "Idea visual (interprétala como metáfora abstracta, no la escribas en "
-        f"pantalla): {prompt_visual}",
-    ]
-    if correccion:
-        partes += [
-            "",
-            "El intento anterior falló. Corrige EXACTAMENTE esto y devuelve el "
-            "HTML completo de nuevo:",
-            correccion,
-        ]
-
-    respuesta = _llamar_con_reintentos(
-        cliente.models.generate_content,
-        model=modelo,
-        contents="\n".join(partes),
-    )
-    html = _limpiar_html(respuesta.text or "")
-    if "data-composition-id" not in html or "__timelines" not in html:
-        raise ValueError("La respuesta de Gemini no es una composición de HyperFrames válida.")
-    return html
-
-
-def _lint(proyecto):
-    """Corre el linter del CLI (sin navegador, ~1 s) y devuelve el texto de los
-    errores, o None si la composición está limpia. Atrapa fallos estructurales
-    antes de pagar los segundos de un render que iba a fallar igual."""
+    Solo cuentan los hallazgos del index.html, que es lo único que escribió
+    Gemini. El linter recorre el directorio entero, y ahí adentro también está
+    nuestro `compositions/chart-story.html` vendorizado, que a propósito no
+    declara data-width/data-height —llena la caja que le da el anfitrión, lo
+    documenta su propio encabezado— y por eso siempre reporta
+    root_missing_dimensions. Con ese error contando como propio, TODA
+    composición quedaba rechazada por algo que Gemini no escribió y no podía
+    arreglar: la corrida 33995064364 se quedó sin un solo clip, con ese hallazgo
+    repetido en cada intento. Medido: lint sobre index.html solo = 0 errores;
+    el mismo index.html con chart-story al lado = 1 error, el de chart-story."""
     try:
         res = subprocess.run(
-            comando_cli() + ["lint", proyecto, "--json"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=TIMEOUT_LINT_SEG, env=_entorno_cli(),
+            ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "lint", directorio, "--json"],
+            capture_output=True, text=True, timeout=TIMEOUT_LINT_SEG, env=entorno_cli(),
         )
         salida = res.stdout or ""
         inicio = salida.find("{")
@@ -564,141 +617,389 @@ def _lint(proyecto):
         return None
 
     errores = []
-    for f in datos.get("findings", []):
-        if f.get("severity") != "error":
+    for hallazgo in datos.get("findings", []):
+        if hallazgo.get("severity") != "error":
             continue
-        linea = f"- {f.get('code', 'error')}: {f.get('message', '')}"
-        # El linter trae la corrección concreta; se la pasamos tal cual al
-        # modelo, que acierta mucho más que con solo el mensaje de error.
-        if f.get("fixHint"):
-            linea += f"\n  Cómo se arregla: {f['fixHint']}"
+        if not _hallazgo_del_modelo(hallazgo, directorio):
+            continue
+        linea = f"- {hallazgo.get('code', 'error')}: {hallazgo.get('message', '')}"
+        if hallazgo.get("fixHint"):
+            linea += f"\n  Cómo se arregla: {hallazgo['fixHint']}"
         errores.append(linea)
+    if not errores:
+        return None
     return "El linter de HyperFrames reportó errores:\n" + "\n".join(errores[:10])
 
 
-def _render(proyecto, ruta_salida):
-    res = subprocess.run(
-        comando_cli() + [
-            "render", proyecto,
-            "-o", ruta_salida,
-            "--fps", str(FPS),
-            "--quality", "standard",
-            "--quiet",
-        ],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=TIMEOUT_RENDER_SEG, env=_entorno_cli(),
+def _limpiar_html(texto):
+    texto = texto.strip()
+    texto = re.sub(r'^```(?:html)?\s*', '', texto)
+    texto = re.sub(r'\s*```$', '', texto)
+    return texto.strip()
+
+
+def _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion=None):
+    ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+    instrucciones = _PROMPT_SISTEMA.format(
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto,
+        alto_libre=_alto_dibujable(ancho, alto), escala_chart=_escala_chart_story(ancho, alto),
+        segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO,
     )
-    if res.returncode != 0 or not _archivo_valido(ruta_salida):
-        detalle = (res.stderr or res.stdout or "").strip()[-2000:]
-        raise RuntimeError(f"hyperframes render falló (código {res.returncode}):\n{detalle}")
+    respuesta = gemini_utils.llamar_con_reintentos(
+        cliente.models.generate_content,
+        model=modelo,
+        contents=(
+            f"{instrucciones}\n\n"
+            f"Tema/idea visual de la escena (no la copies literal, "
+            f"interprétala visualmente): {prompt_visual}"
+            + _bloque_correccion(correccion)
+        ),
+    )
+    html = _limpiar_html(respuesta.text or "")
+    if "id=\"root\"" not in html or "__timelines" not in html:
+        raise ValueError("La respuesta de Gemini no cumple el contrato de HyperFrames.")
+    return html
 
 
-def _duracion_real(ruta):
-    """Segundos que dice ffprobe, o None si no puede leer el archivo.
+def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, correcciones=None,
+                                misma_escena=False):
+    ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+    n = len(prompts_visuales)
+    instrucciones = _PROMPT_SISTEMA_LOTE.format(
+        duracion=DURACION_ESCENA_SEG, ancho=ancho, alto=alto,
+        alto_libre=_alto_dibujable(ancho, alto), escala_chart=_escala_chart_story(ancho, alto),
+        segundo_completo=_SEGUNDO_DIAGRAMA_COMPLETO, n=n,
+    )
+    correcciones = correcciones or {}
+    lista_escenas = "\n".join(
+        f"{i}. {p} (no la copies literal, interprétala visualmente)"
+        + _bloque_correccion(correcciones.get(i - 1))
+        for i, p in enumerate(prompts_visuales, 1)
+    )
+    if misma_escena:
+        instrucciones += CONTINUIDAD_ENTRE_PLANOS
 
-    Un MP4 truncado no tiene el índice al final, así que aquí se cae — que es
-    justo lo que hace falta para no guardar medio render como si fuera bueno."""
-    try:
-        res = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", ruta],
-            capture_output=True, text=True, timeout=60,
-        )
-        return float((res.stdout or "").strip())
-    except Exception:
-        return None
+    respuesta = gemini_utils.llamar_con_reintentos(
+        cliente.models.generate_content,
+        model=modelo,
+        contents=f"{instrucciones}\n\nEscenas:\n{lista_escenas}",
+        config=genai_types.GenerateContentConfig(
+            # Con solo response_mime_type, Gemini a veces devuelve JSON mal
+            # formado en respuestas largas (un array de 5 documentos HTML
+            # completos) y se pierde la llamada entera, carísimo con la
+            # cuota tan ajustada. response_schema fuerza decodificación
+            # restringida a un array de strings válido.
+            response_mime_type="application/json",
+            response_schema=list[str],
+        ),
+    )
+    datos = json.loads(respuesta.text or "[]")
+    if not isinstance(datos, list) or len(datos) != n:
+        raise ValueError(f"Se esperaban {n} composiciones en el array JSON, llegaron {datos if not isinstance(datos, list) else len(datos)}.")
+
+    htmls = [_limpiar_html(h) for h in datos]
+    for html in htmls:
+        if "id=\"root\"" not in html or "__timelines" not in html:
+            raise ValueError("Una composición del lote no cumple el contrato de HyperFrames.")
+    return htmls
 
 
-def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
-                          reintentos=3, duracion_seg=None,
-                          perfil=PERFIL_NARRACION_REFLEXIVA):
-    """Devuelve la ruta local a un clip de video para la idea visual dada, o
-    None si falló tras los reintentos.
+def _instalar_chart_story(directorio):
+    """Copia la sub-composición chart-story dentro del proyecto temporal, en
+    compositions/ y con su duración estirada a la del clip.
 
-    Misma interfaz que veo_broll/manim_broll, más `duracion_seg` y `perfil`.
-    A diferencia de esos motores, el clip se compone con la duración que se
-    pide (hasta DURACION_MAX_SEG), así que no hace falta loopearlo para cubrir
-    la narración."""
-    duracion = float(duracion_seg or DURACION_DEFAULT_SEG) + MARGEN_DURACION_SEG
-    duracion = min(max(duracion, 2.0), DURACION_MAX_SEG)
-    # Se redondea a medio segundo para que dos escenas de duración parecida con
-    # la misma idea visual compartan clip en vez de renderizar dos veces.
-    duracion = math.ceil(duracion * 2) / 2
+    Las dos cosas son necesarias y se descubrieron rindiendo:
 
-    apta, motivo = plataforma_apta()
-    if not apta:
-        # Ni llamada a Gemini ni render: el llamador cae a su otro motor.
-        logger.warning(motivo)
-        return None
+    1. El runtime solo resuelve `data-composition-src` si el archivo cuelga de
+       `compositions/`. Con el HTML al lado del index, el render termina bien
+       pero la gráfica no se monta: quedaba el título que Gemini pone encima y
+       debajo el fondo vacío (así se veían las escenas "en negro").
+    2. chart-story viene con duración propia de 5s, declarada en tres lugares
+       (el <html>, su #root y su clip interno). El runtime oculta el clip al
+       pasarse de esos 5s, así que en un clip de 18s la gráfica se dibujaba y
+       desaparecía. Estirar los tres a la duración de la escena la deja armada
+       hasta el último frame, que es justo el envelope que documenta el
+       componente (HOLD = duración - entrada)."""
+    if not archivos.valido(RUTA_CHART_STORY_VENDOR):
+        return
 
-    ruta_salida = _ruta_cache(prompt_visual, aspecto, duracion, perfil)
-    if _archivo_valido(ruta_salida):
-        # Un clip que quedó truncado por el camino viejo (antes de que el
-        # render fuera atómico) sigue pesando más de cero y la caché lo
-        # serviría igual. Se comprueba de verdad una vez y, si está roto, se
-        # tira y se regenera. Solo si hay ffprobe: sin él, mejor servir el
-        # clip que negarlo por no poder mirarlo.
-        if shutil.which("ffprobe") and _duracion_real(ruta_salida) is None:
-            logger.warning("Clip cacheado ilegible, se regenera: "
-                           f"{os.path.basename(ruta_salida)}")
-            try:
-                os.remove(ruta_salida)
-            except OSError:
-                pass
-        else:
-            # Recién usado, que es lo que mira la poda de la caché.
-            try:
-                os.utime(ruta_salida, None)
-            except OSError:
-                pass
-            return ruta_salida
+    with open(RUTA_CHART_STORY_VENDOR, "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace('data-composition-duration="5"', f'data-composition-duration="{DURACION_ESCENA_SEG}"')
+    html = html.replace('data-duration="5"', f'data-duration="{DURACION_ESCENA_SEG}"')
 
-    w, h = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
-    parcial = _ruta_parcial(ruta_salida)
-    cliente = _obtener_cliente()
-    correccion = None
+    destino = os.path.join(directorio, "compositions")
+    os.makedirs(destino, exist_ok=True)
+    with open(os.path.join(destino, "chart-story.html"), "w", encoding="utf-8") as f:
+        f.write(html)
 
-    for intento in range(1, reintentos + 1):
+
+def _clip_tiene_contenido(ruta_clip):
+    """True si el clip muestra algo sobre el fondo en los instantes en que el
+    diagrama ya debería estar armado.
+
+    Existe porque un render puede terminar con código 0 y un mp4 válido, y aun
+    así ser 18 segundos de fondo liso (una composición donde nada llegó a
+    dibujarse). Eso pasa desapercibido hasta que se ve el video terminado, con
+    la escena entera en negro debajo de la narración. Acá se detecta y se trata
+    como un render fallido, para que el reintento pida otra composición.
+
+    Mide qué PORCIÓN del 78% superior del cuadro (el resto va tapado por los
+    subtítulos) está encendida sobre el fondo #0b0f14, que mide luminancia ~14.
+    Medir el píxel más claro no alcanzaba: una composición con un título suelto
+    y nada debajo lo pasaba con holgura. Por cobertura la separación es limpia:
+    los clips con un diagrama de verdad ocupan 2.7% o más, y los que solo
+    tienen un rótulo se quedan en 1.5% o menos."""
+    for instante in INSTANTES_MUESTRA_CONTENIDO:
         try:
-            html = _generar_html(cliente, prompt_visual, modelo, duracion, w, h,
-                                 perfil, correccion)
-            with tempfile.TemporaryDirectory(prefix="hyperframes_broll_") as tmp:
-                with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
-                    f.write(html)
-
-                # El linter es barato; si encuentra errores, se los devolvemos
-                # al modelo en el siguiente intento en vez de gastar un render.
-                errores = _lint(tmp)
-                if errores:
-                    raise RuntimeError(errores)
-
-                # Se renderiza a un archivo aparte y solo al final se mueve al
-                # nombre de la caché, con os.replace, que es atómico. Si el
-                # proceso muere a media escritura —en un portátil que se
-                # suspende, en un runner que se queda sin tiempo— lo que queda
-                # es un .parcial que nadie lee, no un MP4 truncado que la
-                # caché daría por bueno para siempre.
-                _render(tmp, parcial)
-                dur_real = _duracion_real(parcial)
-                if dur_real is None or dur_real < duracion * 0.5:
-                    raise RuntimeError(
-                        "El render salió ilegible o demasiado corto "
-                        f"({'ilegible' if dur_real is None else f'{dur_real:.1f}s'} "
-                        f"de {duracion:.1f}s pedidos)."
-                    )
-                os.replace(parcial, ruta_salida)
-
-            if _archivo_valido(ruta_salida):
-                limpiar_cache()
-                return ruta_salida
+            res = subprocess.run(
+                ["ffmpeg", "-v", "error", "-ss", f"{instante:.2f}", "-i", ruta_clip,
+                 "-frames:v", "1", "-vf", "crop=iw:ih*0.78:0:0,scale=160:90",
+                 "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                capture_output=True, timeout=60,
+            )
         except Exception as exc:
-            logger.warning(f"HyperFrames intento {intento}/{reintentos} falló: {exc}")
-            correccion = str(exc)[-1500:]
+            logger.warning(f"No se pudo inspeccionar {ruta_clip}: {exc}")
+            return True  # ante la duda, no descartes un clip que quizá esté bien
+        pixeles = res.stdout
+        if not pixeles:
+            continue
+        encendidos = sum(1 for p in pixeles if p >= LUMINANCIA_MINIMA_CONTENIDO)
+        if encendidos / len(pixeles) >= COBERTURA_MINIMA_CONTENIDO:
+            return True
+    return False
+
+
+def _clip_cacheado_utilizable(ruta_clip):
+    """Un clip de la caché sirve solo si además de existir muestra algo. La
+    caché sobrevive entre corridas (ver el workflow), así que sin esto un clip
+    que salió vacío se reusaría para siempre: la validación del render nunca
+    volvería a correr sobre él. Cuando no sirve se borra, y la escena se
+    regenera en esta misma corrida."""
+    if not archivos.valido(ruta_clip):
+        return False
+    if _clip_tiene_contenido(ruta_clip):
+        # Recién usado, que es por dónde decide limpiar_cache a quién borrar.
+        try:
+            os.utime(ruta_clip, None)
+        except OSError:
+            pass
+        return True
+
+    logger.warning(f"Clip cacheado vacío, se descarta y se regenera: {ruta_clip}")
+    try:
+        os.remove(ruta_clip)
+    except OSError as exc:
+        logger.warning(f"No se pudo borrar el clip vacío {ruta_clip}: {exc}")
+    return False
+
+
+def renderizar_html(html, ruta_salida, nombre="escena", verificar_contenido=True,
+                    con_chart_story=False):
+    """Renderiza un documento HyperFrames a mp4 con el CLI y lo deja en ruta_salida.
+
+    La usan los tres motores que dibujan con HyperFrames —este, estoico_broll y
+    curiosidades_broll—, que antes tenían cada uno su copia de esta misma
+    secuencia (armar el proyecto temporal, copiar el GSAP vendorizado, linter,
+    `npx hyperframes render`, recoger el mp4) y llegaban a los privados de este
+    módulo desde afuera para hacerlo.
+
+    Los dos parámetros existen porque ahí está la única diferencia real entre
+    esas copias:
+
+    - `verificar_contenido`: descartar el render si el cuadro quedó vacío
+      (ver _clip_tiene_contenido) solo tiene sentido cuando el HTML lo escribió
+      un modelo y puede venir en blanco. Los glifos y gráficos dibujados por
+      código son deterministas y además de línea fina, así que no llegan al
+      umbral de cobertura de ese chequeo aunque el render sea perfecto: para
+      ellos va en False y basta con que el CLI devuelva 0.
+    - `con_chart_story`: la sub-composición de gráficas solo la usan las
+      composiciones que pide Gemini; las plantillas propias no la referencian.
+    """
+    if not archivos.valido(RUTA_GSAP_VENDOR):
+        raise RuntimeError(f"No se encontró {RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
+
+    with tempfile.TemporaryDirectory(prefix=f"hyperframes_{nombre}_") as tmp:
+        with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
+            f.write(html)
+        shutil.copyfile(RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
+        if con_chart_story:
+            _instalar_chart_story(tmp)
+        with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"id": nombre, "name": nombre.capitalize()}, f)
+
+        # El linter es barato y el render caro: si la composición incumple el
+        # contrato, se sabe en un segundo y no en treinta.
+        errores = _lint(tmp)
+        if errores:
+            raise RuntimeError(errores)
+
+        res = subprocess.run(
+            ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "render"],
+            cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
+            env=entorno_cli(),
+        )
+        if res.returncode != 0:
+            detalle = (res.stderr or res.stdout or "").strip()[-2000:]
+            raise RuntimeError(f"hyperframes render falló (código {res.returncode}):\n{detalle}")
+
+        candidatos = glob.glob(os.path.join(tmp, "renders", "*.mp4"))
+        if not candidatos:
+            raise RuntimeError("hyperframes render no generó ningún mp4 en renders/.")
+
+        ruta_render = max(candidatos, key=os.path.getmtime)
+        if verificar_contenido and not _clip_tiene_contenido(ruta_render):
+            raise RuntimeError(
+                "El clip renderizado quedó vacío (el cuadro no muestra nada sobre el "
+                "fondo). Se descarta para que el reintento genere otra composición."
+            )
+        # Se copia a un archivo aparte y solo al final se mueve al nombre
+        # definitivo, con os.replace, que es atómico. Si el proceso muere a
+        # media copia —un runner que se queda sin tiempo, un portátil que se
+        # suspende— lo que queda es un .parcial que nadie lee, no un mp4
+        # truncado que `archivos.valido` daría por bueno y la caché serviría
+        # para siempre. Vale para los tres motores, que pasan todos por aquí.
+        parcial = _ruta_parcial(ruta_salida)
+        try:
+            shutil.copyfile(ruta_render, parcial)
+            os.replace(parcial, ruta_salida)
         finally:
             if os.path.exists(parcial):
                 try:
                     os.remove(parcial)
                 except OSError:
                     pass
+    if not archivos.valido(ruta_salida):
+        raise RuntimeError("El render de HyperFrames no produjo un archivo válido.")
+
+
+def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT, reintentos=2):
+    """Misma interfaz que veo_broll/manim_broll.generar_clip_cacheado: devuelve
+    la ruta local a un clip de video para el prompt dado (generado con
+    HyperFrames), o None si falló tras los reintentos."""
+    ruta_salida = _ruta_cache(prompt_visual, aspecto)
+    if _clip_cacheado_utilizable(ruta_salida):
+        return ruta_salida
+
+    cliente = _obtener_cliente()
+    correccion = None
+    for intento in range(1, reintentos + 1):
+        try:
+            html = _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion)
+            renderizar_html(html, ruta_salida, con_chart_story=True)
+            if archivos.valido(ruta_salida):
+                return ruta_salida
+        except Exception as exc:
+            logger.warning(f"HyperFrames intento {intento}/{reintentos} falló: {exc}")
+            correccion = str(exc)[-1500:]
 
     return None
+
+
+def _generar_con_plantillas(prompts_visuales, aspecto, rutas):
+    """Dibuja cada plano pendiente con plantillas_broll y lo renderiza.
+
+    No hay lote ni reintentos porque no hay nada que reintentar: el HTML es una
+    función pura del texto del plano, así que si falla lo hace siempre igual y
+    volver a pedirlo daría exactamente lo mismo. Un fallo acá es un bug de este
+    repo, no una respuesta desafortunada de un modelo, y tiene que verse como
+    tal en el log."""
+    ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["16:9"])
+    libre = _alto_dibujable(ancho, alto)
+    for i, prompt in enumerate(prompts_visuales):
+        if rutas[i] is not None:
+            continue
+        ruta_salida = _ruta_cache(prompt, aspecto)
+        try:
+            html = plantillas_broll.construir_html(
+                prompt, ancho, alto, libre, DURACION_ESCENA_SEG
+            )
+            renderizar_html(html, ruta_salida)
+            if archivos.valido(ruta_salida):
+                rutas[i] = ruta_salida
+        except Exception as exc:
+            logger.error(f"Plantilla del plano {i} falló: {exc}")
+    return rutas
+
+
+def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT,
+                                  tam_lote=TAM_LOTE_DEFAULT, reintentos=2, tamanos_escena=None):
+    """Genera clips para una lista de prompts, agrupando las llamadas a Gemini
+    en vez de hacer una por plano. Devuelve una lista de rutas alineada con
+    prompts_visuales (None en las posiciones que fallaron tras los reintentos).
+
+    `tamanos_escena` dice cuántos planos consecutivos pertenecen a cada escena.
+    Con ese dato, los planos de una misma escena se piden en la MISMA llamada y
+    con la instrucción de continuidad: son tomas seguidas de un mismo dibujo, no
+    dibujos distintos. Sin eso, cada plano se inventa su propia maqueta —otras
+    posiciones, otros tamaños, otro encuadre— y la escena se ve como tres
+    láminas sueltas en vez de una idea que avanza.
+
+    Cada reintento solo vuelve a pedir las escenas que aún faltan (ya sea
+    porque el lote completo falló, o porque el render de una escena puntual
+    del lote falló) — así un fallo aislado no gasta una llamada extra en
+    escenas que ya salieron bien. Lo que sigue sin clip después de todos los
+    lotes se reintenta escena por escena antes de darse por vencido."""
+    escena_de = _mapa_escenas(tamanos_escena, len(prompts_visuales))
+    rutas = [None] * len(prompts_visuales)
+    for i, prompt in enumerate(prompts_visuales):
+        ruta = _ruta_cache(prompt, aspecto)
+        if _clip_cacheado_utilizable(ruta):
+            rutas[i] = ruta
+
+    if _motor_composicion == "plantillas":
+        resultado = _generar_con_plantillas(prompts_visuales, aspecto, rutas)
+        limpiar_cache()
+        return resultado
+
+    cliente = _obtener_cliente()
+    # Motivo por el que falló cada escena, para dárselo al modelo en el
+    # siguiente intento en vez de volver a pedirle lo mismo a ciegas.
+    correcciones = {}
+    for intento in range(1, reintentos + 1):
+        pendientes = [(i, p) for i, p in enumerate(prompts_visuales) if rutas[i] is None]
+        if not pendientes:
+            break
+
+        for lote in _armar_lotes(pendientes, tam_lote, escena_de):
+            indices, prompts_lote = zip(*lote)
+            # Un lote que es exactamente una escena se pide con continuidad;
+            # uno que junta escenas sueltas, no (mezclarlas haría que dibujos de
+            # temas distintos se parezcan entre sí, que es el defecto opuesto).
+            misma_escena = (
+                bool(escena_de) and len(lote) > 1
+                and len({escena_de.get(i) for i, _ in lote}) == 1
+            )
+            try:
+                htmls = _generar_composiciones_lote(
+                    cliente, list(prompts_lote), aspecto, modelo,
+                    {j: correcciones[idx] for j, idx in enumerate(indices) if idx in correcciones},
+                    misma_escena,
+                )
+            except Exception as exc:
+                logger.warning(f"Lote HyperFrames (intento {intento}/{reintentos}, escenas {list(indices)}) falló al generar HTML: {exc}")
+                continue
+
+            for idx, prompt, html in zip(indices, prompts_lote, htmls):
+                ruta_salida = _ruta_cache(prompt, aspecto)
+                try:
+                    renderizar_html(html, ruta_salida, con_chart_story=True)
+                    if archivos.valido(ruta_salida):
+                        rutas[idx] = ruta_salida
+                except Exception as exc:
+                    logger.warning(f"Render de la escena {idx} (lote) falló: {exc}")
+                    correcciones[idx] = str(exc)[-1500:]
+
+    # Rescate uno a uno de lo que quedó sin clip. Una escena sin video de apoyo
+    # aborta el día entero (ver generar_video_maestro), así que vale la llamada
+    # extra: los fallos que llegan hasta acá suelen ser del lote como formato
+    # —Gemini devolviendo 3 composiciones donde se pidieron 5, o una que no
+    # cumple el contrato— y no de la escena en sí, que pedida sola sale bien.
+    for i, prompt in enumerate(prompts_visuales):
+        if rutas[i] is not None:
+            continue
+        logger.warning(f"Escena {i} sin clip tras los lotes: se reintenta sola.")
+        rutas[i] = generar_clip_cacheado(prompt, aspecto=aspecto, modelo=modelo)
+
+    limpiar_cache()
+    return rutas

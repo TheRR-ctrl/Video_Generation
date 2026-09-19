@@ -19,6 +19,8 @@ import logging
 from google import genai
 from google.genai import types as genai_types
 
+import presupuesto
+
 MODELO_DEFAULT = "gemini-2.5-flash-preview-tts"
 SAMPLE_RATE_HZ = 24000  # Formato fijo de salida de la API de Gemini TTS: PCM 16-bit mono 24kHz.
 SAMPLE_WIDTH_BYTES = 2
@@ -50,6 +52,9 @@ def generar_audio(texto, voz, ruta_wav_salida, modelo=MODELO_DEFAULT, reintentos
     cliente = _obtener_cliente()
 
     for intento in range(1, reintentos + 1):
+        # Igual que en gemini_utils: se anota antes de llamar y por intento, para
+        # que un bucle de reintentos no siga pidiendo sin tope (ver presupuesto.py).
+        presupuesto.consumir("tts", 1, modelo)
         try:
             respuesta = cliente.models.generate_content(
                 model=modelo,

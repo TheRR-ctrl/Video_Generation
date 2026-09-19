@@ -13,3 +13,4 @@ video_maestro.log
 *.png
 __pycache__/
 *.pyc
+node_modules/

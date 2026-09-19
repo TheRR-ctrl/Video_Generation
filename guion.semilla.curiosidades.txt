@@ -1,0 +1,16 @@
+# Dia: 1
+# Tema: Prueba técnica del motor curiosidades (rayo, barra, onda, ruido sobre HyperFrames).
+# TituloHook: Un rayo calienta el aire más que la superficie del sol.
+# DuracionObjetivoMin: 0.5
+### ESCENA
+VISUAL: [rayo] descarga vertical entre dos nubes. Etiquetas: 30.000 °C
+TEXTO: Un solo rayo calienta el aire a su alrededor más que la superficie del sol. Por eso el trueno que escuchas después es literalmente aire explotando.
+### ESCENA
+VISUAL: [barra] campo eléctrico con lluvia contra campo en seco. Etiquetas: en seco, con lluvia. Datos: 1, 6
+TEXTO: La lluvia no apaga la electricidad en el aire, la multiplica. El campo eléctrico cerca del suelo puede ser seis veces más intenso durante una tormenta.
+### ESCENA
+VISUAL: [onda] la corriente de tu casa contra el zumbido que se escucha cerca de un cable. Etiquetas: 50 Hz, 100 Hz
+TEXTO: Ese zumbido que a veces escuchas cerca de un cable de luz no es la corriente en sí. Es el doble de su frecuencia, vibrando el aire como una cuerda.
+### ESCENA
+VISUAL: [ruido] interferencia electromagnética captada por una radio. Etiquetas: estática atmosférica
+TEXTO: Cuéntame en los comentarios si alguna vez escuchaste esa estática rara en la radio antes de una tormenta. Si te sorprendió este dato, dale like y suscríbete.

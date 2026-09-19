@@ -1,0 +1,8 @@
+{
+  "name": "video-generation-audio-tools",
+  "private": true,
+  "description": "Dependencias de Node para el mezclado de audio (voiceover carve de HyperFrames). El pipeline en sí es Python; esto solo resuelve @hyperframes/core para vendor/carve.mjs.",
+  "devDependencies": {
+    "@hyperframes/core": "0.8.27"
+  }
+}
