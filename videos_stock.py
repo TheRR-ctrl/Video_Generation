@@ -178,11 +178,24 @@ def _candidatos(consulta, aspecto, duracion):
     """Junta los candidatos de las dos fuentes y descarta los más cortos que la
     escena. Un fallo de una fuente no tumba la otra: se registra y se sigue."""
     encontrados = []
-    for buscar in (_buscar_pexels, _buscar_pixabay):
+    aporte = {}
+    for banco, buscar in (("pexels", _buscar_pexels), ("pixabay", _buscar_pixabay)):
         try:
-            encontrados += buscar(consulta, aspecto)
+            hallados = buscar(consulta, aspecto)
+            encontrados += hallados
+            aporte[banco] = len(hallados)
         except requests.RequestException as exc:
+            aporte[banco] = "error"
             logger.warning(f"{buscar.__name__} falló para '{consulta}': {exc}")
+    # Cuántos candidatos puso cada banco, no solo de cuál salió el elegido: con
+    # las dos fuentes activas la elección es a suerte entre ~80, así que los
+    # cuatro planos de un video pueden salir de Pexels por casualidad y parecer
+    # que la segunda fuente no está. Un cero fijo en pixabay es la señal real de
+    # que falta PIXABAY_API_KEY.
+    logger.info(
+        f"Candidatos para '{consulta}': "
+        + ", ".join(f"{b}={n}" for b, n in aporte.items())
+    )
     minimo = duracion + MARGEN_DURACION_SEG
     # Si ninguno llega al mínimo se devuelven igual los que haya: _ajustar sabe
     # repetir en bucle un clip corto, y un clip corto en bucle es mejor que
