@@ -2,9 +2,19 @@
 Script Writer — convierte pipeline_state/plan_contenido.json (salida de
 content_planner.py) en guion.txt, dividiendo cada video en escenas: cada
 escena trae el texto narrado y un prompt visual para generar su clip de video
-de apoyo. El estilo del prompt visual depende de 'motor_broll' en config.json:
-descripción filmable en inglés para Veo, o concepto a visualizar en español
-para los motores que dibujan con código (hyperframes/manim).
+de apoyo.
+
+El estilo de ese prompt visual lo decide 'motor_broll' en config.json, y no es
+un detalle cosmético: cada motor lee algo distinto.
+  - hyperframes / manim: concepto a visualizar en español, que el motor dibuja
+    por código (diagramas, curvas, comparaciones).
+  - fotos: consulta de búsqueda para el banco de fotos (fondos_stock.py).
+  - estoico: "[arquetipo] consulta de foto" — el glifo fijo del formato más la
+    foto de fondo sobre la que se mezcla (plantillas_sello.py).
+  - curiosidades: "[arquetipo] Etiquetas: ... Datos: ..." — los datos que
+    plantillas_curiosidades.py convierte en el gráfico.
+  - veo: descripción filmable en inglés (motor de pago, detrás del tope de
+    presupuesto.py).
 
 Usa Gemini (capa gratuita) para escribir el guion completo de cada día.
 
@@ -37,7 +47,11 @@ RUTA_CONFIG = os.path.join(BASE_DIR, "config.json")
 
 CONFIG_DEFAULT = {
     "modelo_texto": "gemini-3.6-flash",
-    "motor_broll": "veo",
+    # El motor gratuito, igual que en generar_video_maestro.CONFIG_DEFAULT: acá
+    # el motor no gasta, pero decide en qué estilo se escribe cada VISUAL:, y
+    # con "veo" salían descripciones cinematográficas en inglés que ninguno de
+    # los motores que usa el canal sabe dibujar.
+    "motor_broll": "hyperframes",
     "formato": "largo",
 }
 
@@ -559,7 +573,7 @@ def main():
         try:
             guion = escribir_guion_dia(
                 client, cfg["modelo_texto"], dia,
-                cfg.get("motor_broll", "veo"), formato_video.formato_de(cfg),
+                cfg.get("motor_broll", CONFIG_DEFAULT["motor_broll"]), formato_video.formato_de(cfg),
                 cfg.get("formato_canal", "manual"),
             )
             if not guion.get("escenas"):

@@ -29,6 +29,8 @@ import subprocess
 
 import requests
 
+import archivos
+
 logger = logging.getLogger("fondos_stock")
 
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
@@ -71,10 +73,6 @@ def _ruta_cache(consulta, aspecto):
     return os.path.join(CARPETA_CACHE, f"foto_{clave}.jpg")
 
 
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
-
-
 # Palabras de relleno que no aportan nada a una búsqueda de fotos y solo le
 # roban lugar a las palabras concretas dentro del límite de 4.
 _RELLENO = {
@@ -96,7 +94,7 @@ def buscar_foto_cacheada(consulta, aspecto="9:16", reintentos=2):
     Pexels si no está ya en caché. None si falló."""
     consulta = _limpiar_consulta(consulta)
     ruta_salida = _ruta_cache(consulta, aspecto)
-    if _archivo_valido(ruta_salida):
+    if archivos.valido(ruta_salida):
         return ruta_salida
 
     orientacion = "portrait" if aspecto == "9:16" else "landscape" if aspecto == "16:9" else "square"
@@ -119,7 +117,7 @@ def buscar_foto_cacheada(consulta, aspecto="9:16", reintentos=2):
             img.raise_for_status()
             with open(ruta_salida, "wb") as f:
                 f.write(img.content)
-            if _archivo_valido(ruta_salida):
+            if archivos.valido(ruta_salida):
                 return ruta_salida
         except requests.RequestException as exc:
             logger.warning(f"Pexels intento {intento}/{reintentos} falló para '{consulta}': {exc}")
@@ -152,7 +150,7 @@ def clip_desde_foto(ruta_foto, ancho, alto, duracion, ruta_salida, fps=30):
          ruta_salida],
         check=True, timeout=60,
     )
-    if not _archivo_valido(ruta_salida):
+    if not archivos.valido(ruta_salida):
         raise RuntimeError("ffmpeg no generó un clip válido desde la foto.")
     return ruta_salida
 
@@ -163,7 +161,7 @@ def generar_clip_cacheado(consulta, aspecto="9:16", duracion=6, reintentos=2):
     clave = hashlib.sha256(f"{aspecto}|{duracion}|{_limpiar_consulta(consulta)}".encode("utf-8")).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     ruta_clip = os.path.join(CARPETA_CACHE, f"clip_{clave}.mp4")
-    if _archivo_valido(ruta_clip):
+    if archivos.valido(ruta_clip):
         return ruta_clip
 
     foto = buscar_foto_cacheada(consulta, aspecto, reintentos)

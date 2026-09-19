@@ -1,13 +1,17 @@
 """
 Generar Video Maestro — renderiza cada día del guion (guion.txt, salida de
-script_writer.py) como un video narrado con voz IA (Gemini TTS) sobre video
-de apoyo generado por IA (Veo), subtítulos karaoke y música de fondo
-opcional.
+script_writer.py) como un video narrado con voz IA, subtítulos karaoke y
+música de fondo opcional.
 
 A diferencia del pipeline hermano video-scout-pipeline (que arma el fondo
-cortando videoclips propios), acá cada escena del guion genera su propio
-clip de video con Veo a partir del prompt_visual escrito por script_writer.py,
-ajustado (loop/recorte) a la duración real de su narración.
+cortando videoclips propios), acá cada plano del guion genera su propio clip
+a partir del prompt_visual que escribió script_writer.py, ajustado
+(loop/recorte) a la duración real de la narración de su escena.
+
+Qué motor dibuja ese clip y qué voz lo narra lo deciden `motor_broll` y
+`motor_tts` (ver README): hoy el canal usa los gratuitos —HyperFrames y las
+plantillas propias para el video, edge-tts para la voz— y Veo/Gemini TTS
+quedan como opciones de pago detrás del tope de presupuesto.py.
 
 Salida: pipeline_state/resultado_lote.json (uno por corrida, describe los
 videos completados y los fallidos).
@@ -16,7 +20,6 @@ Requiere: ffmpeg/ffprobe en el PATH, pip install -r requirements.txt.
 """
 import os
 import re
-import sys
 import json
 import math
 import shutil
@@ -27,6 +30,7 @@ import tempfile
 from datetime import timedelta
 
 import env_local  # noqa: F401 (carga .env si existe)
+import archivos
 import formatos_canal
 import tts_gemini
 import tts_edge
@@ -53,8 +57,13 @@ CONFIG_DEFAULT = {
     "modelo_tts": "gemini-2.5-flash-preview-tts",
     "modelo_veo": "veo-3.0-generate-001",
     "modelo_texto": "gemini-3.6-flash",
-    "motor_broll": "veo",
-    "motor_tts": "gemini",
+    # Los dos motores gratuitos, a propósito: estos valores son los que rigen
+    # si config.json no existe o le falta la clave, y el default anterior
+    # (veo + gemini, los dos de pago) fue exactamente lo que vació el saldo
+    # prepago en la corrida 34003101637 — se disparó el workflow sin tocar el
+    # campo y se fue a Veo solo. Un default no puede costar dinero.
+    "motor_broll": "hyperframes",
+    "motor_tts": "edge",
     "voz_masculina_edge": tts_edge.VOZ_FALLBACK_MASCULINA,
     "voz_femenina_edge": tts_edge.VOZ_FALLBACK_FEMENINA,
     "reintentar_existentes": False,
@@ -66,6 +75,27 @@ RESOLUCIONES = {
     "16:9": (1920, 1080),
     "9:16": (1080, 1920),
     "1:1": (1080, 1080),
+}
+
+# Motores que generan un clip por PLANO con la misma firma
+# (plano, aspecto=, duracion=). Lo que cambia entre ellos es qué dibuja cada
+# uno a partir del VISUAL: de la escena:
+#   - fotos:        la línea es directamente la consulta de búsqueda en Pexels
+#                   (formato emocional). Una foto por plano, con Ken Burns.
+#   - estoico:      un [arquetipo] de glifo (grieta/brasa/circulo/anillos/
+#                   ascenso, ver plantillas_sello.py) MÁS la consulta de foto;
+#                   las dos capas se componen en estoico_broll._mezclar. Es la
+#                   identidad visual fija del formato, sin generar una imagen
+#                   distinta por escena.
+#   - curiosidades: un [arquetipo] de gráfico (rayo/barra/onda/ruido, ver
+#                   plantillas_curiosidades.py) con sus etiquetas y datos.
+#                   Todo dibujado por código, sin fotos ni API de imagen.
+# Los otros tres motores (manim, hyperframes, veo) quedan fuera porque no
+# comparten esa firma: piden modelo, o resuelven todos los planos de una.
+MOTORES_POR_PLANO = {
+    "fotos": fondos_stock,
+    "estoico": estoico_broll,
+    "curiosidades": curiosidades_broll,
 }
 
 # Tonos de voz entre los que se sortea uno por video (--pitch de edge-tts).
@@ -198,10 +228,6 @@ def ejecutar_comando(cmd, descripcion="Comando", timeout=None, check=True):
     return res
 
 
-def archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
-
-
 def comprobar_dependencias():
     faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
     if faltantes:
@@ -225,7 +251,7 @@ class GestorTemporales:
 
 def medir_duracion_media(ruta_archivo):
     try:
-        if not archivo_valido(ruta_archivo):
+        if not archivos.valido(ruta_archivo):
             return 0.0
         res = ejecutar_comando(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", ruta_archivo],
@@ -334,7 +360,7 @@ def leer_bloques_srt_escena(ruta_srt, offset_seg, indice_inicial):
     cantidad de caracteres, lo que se desfasa apenas la locución cambia de
     ritmo. Devuelve ([], indice_inicial) si el SRT no existe o viene vacío, para
     que el llamador pueda caer a la estimación sin romperse."""
-    if not archivo_valido(ruta_srt):
+    if not archivos.valido(ruta_srt):
         return [], indice_inicial
 
     with open(ruta_srt, "r", encoding="utf-8") as f:
@@ -660,7 +686,7 @@ def seleccionar_musica_fondo(tono):
     exts = ('.m4a', '.mp3', '.wav', '.aac')
 
     def candidatas(prefijo):
-        return [f for f in os.listdir(BASE_DIR) if f.startswith(prefijo) and f.endswith(exts) and archivo_valido(os.path.join(BASE_DIR, f))]
+        return [f for f in os.listdir(BASE_DIR) if f.startswith(prefijo) and f.endswith(exts) and archivos.valido(os.path.join(BASE_DIR, f))]
 
     for prefijo in (f"musica_{tono}", "musica_fondo"):
         opciones = candidatas(prefijo)
@@ -764,7 +790,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         os.makedirs(carpeta_salida, exist_ok=True)
         ruta_out = os.path.join(carpeta_salida, f"{info['dia']:02d}_{slug}.mp4")
 
-        if not cfg["reintentar_existentes"] and archivo_valido(ruta_out):
+        if not cfg["reintentar_existentes"] and archivos.valido(ruta_out):
             logger.info(f"Día {info['dia']} ya existe, se omite: {os.path.basename(ruta_out)}")
             return None
 
@@ -799,7 +825,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         hyperframes_broll.configurar_motor_composicion(
             cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
         )
-        motor = cfg.get("motor_broll", "veo")
+        motor = cfg.get("motor_broll", CONFIG_DEFAULT["motor_broll"])
         rutas_broll_lote = None
         if motor == "hyperframes":
             # Se piden todos los planos de todas las escenas de una sola vez: el
@@ -853,37 +879,9 @@ def renderizar_una_historia(bloque, cfg, num=1):
                 ]
             elif motor == "hyperframes":
                 clips_base = rutas_broll_lote[base_plano:base_plano + len(escena["planos"])]
-            elif motor == "fotos":
-                # Formato emocional/poético: cada VISUAL: es directamente la
-                # consulta de búsqueda en Pexels, no un [arquetipo]. Una foto
-                # por plano, con Ken Burns aplicado en fondos_stock.
+            elif motor in MOTORES_POR_PLANO:
                 clips_base = [
-                    fondos_stock.generar_clip_cacheado(
-                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
-                    )
-                    for plano in escena["planos"]
-                ]
-            elif motor == "estoico":
-                # Formato estoico/resiliencia: cada VISUAL: trae un [arquetipo]
-                # de glifo (grieta/brasa/circulo/anillos/ascenso, ver
-                # plantillas_sello.py) + la consulta de foto en Pexels. Las dos
-                # capas se mezclan por doble exposición (blend=screen) en
-                # estoico_broll.py: es la identidad visual fija del formato,
-                # gratis, sin generar una imagen distinta por escena.
-                clips_base = [
-                    estoico_broll.generar_clip_cacheado(
-                        plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
-                    )
-                    for plano in escena["planos"]
-                ]
-            elif motor == "curiosidades":
-                # Formato curiosidades científicas: cada VISUAL: trae un
-                # [arquetipo] de gráfico (rayo/barra/onda/ruido, ver
-                # plantillas_curiosidades.py) con sus etiquetas/datos
-                # embebidos. Todo dibujado por código —lluvia y reflejo de
-                # agua incluidos—, sin fotos de banco ni API de imagen.
-                clips_base = [
-                    curiosidades_broll.generar_clip_cacheado(
+                    MOTORES_POR_PLANO[motor].generar_clip_cacheado(
                         plano, aspecto=aspecto, duracion=hyperframes_broll.DURACION_ESCENA_SEG
                     )
                     for plano in escena["planos"]
@@ -903,7 +901,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
 
             ruta_clip_escena = gestor.registrar(f"escena_{i}_video.mp4")
             armar_video_escena(clips_base, dur_escena, w, h, ruta_clip_escena, gestor, i)
-            if not archivo_valido(ruta_clip_escena):
+            if not archivos.valido(ruta_clip_escena):
                 raise RuntimeError(f"El clip ajustado de la escena {i} no es válido.")
 
             lineas = []
@@ -1016,7 +1014,7 @@ def renderizar_una_historia(bloque, cfg, num=1):
         def ejecutar_render(flags_encoder):
             cmd = cmd_ff + flags_encoder + flags_audio + [ruta_out]
             res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
-            return res.returncode == 0 and archivo_valido(ruta_out)
+            return res.returncode == 0 and archivos.valido(ruta_out)
 
         print(" ├─ 🚀 Renderizando...")
         exito = ejecutar_render(flags_gpu)

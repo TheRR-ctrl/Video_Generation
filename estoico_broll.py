@@ -13,25 +13,23 @@ personaje fijo, un GLIFO fijo por arquetipo (ver plantillas_sello.py),
 dibujado por código, mezclado ópticamente sobre la foto — doble exposición,
 no un recorte.
 
-Por qué "screen blend" y no croma/canal alfa: HyperFrames no exporta video
-con transparencia. Pero un glifo dibujado en blanco/dorado sobre negro puro
-(#000000) y mezclado con `blend=all_mode=screen` logra el mismo efecto sin
-canal alfa: screen(negro, X) = X sin cambios, así que el fondo del glifo
-"desaparece" y solo queda su luz flotando sobre la foto. Verificado con una
-imagen sintética antes de este archivo (ver conversación): sin bordes duros,
-sin artefactos de croma.
+Cómo se superponen las dos capas sin croma: HyperFrames no exporta video con
+transparencia, así que el glifo llega dibujado en blanco/dorado sobre negro
+puro (#000000) y se le arma el canal alfa a partir de su propia luminancia
+(`alphamerge` + `overlay`, ver _mezclar): donde es negro queda transparente y
+la foto pasa intacta; donde tiene luz, se compone encima. La primera versión
+usaba `blend=all_mode=screen`, que es la técnica estándar para esto, pero ese
+modo salió roto en el ffmpeg del runner — el detalle está en _mezclar.
 
 Requiere lo mismo que sus dos partes: PEXELS_API_KEY (fondos_stock) y
 Node.js + ffmpeg (hyperframes_broll, ya requeridos por el pipeline).
 """
 import os
-import glob
-import shutil
 import hashlib
 import logging
-import tempfile
 import subprocess
 
+import archivos
 import fondos_stock
 import plantillas_sello
 import hyperframes_broll
@@ -62,10 +60,6 @@ def _purgar_nombres_invalidos():
                 logger.warning(f"No se pudo purgar {nombre}: {exc}")
 
 
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
-
-
 # Se suma a la clave de caché del COMPOSITE (no del glifo suelo): si cambia
 # cómo se mezclan foto+glifo (como pasó de blend=screen, roto, a alphamerge+
 # overlay), hay que invalidar los archivos ya cacheados de la corrida
@@ -83,45 +77,19 @@ def _ruta_cache(sello, consulta, aspecto, duracion):
 
 
 def _renderizar_sello(sello, ancho, alto, duracion, ruta_salida):
-    """Render dedicado en vez de reusar hyperframes_broll._renderizar_composicion:
-    esa función descarta el clip si el 78% superior del cuadro no llega a un 2%
-    de píxeles encendidos, un umbral pensado para diagramas rellenos (barras,
-    cajas). Un glifo de línea fina (ver plantillas_sello.py) es deliberadamente
-    minimalista y no llega a esa cobertura aunque el render sea perfecto — se
-    verificó a ojo antes de este archivo. Al ser HTML propio y determinista (no
-    la respuesta de un modelo que podría venir vacía), ese chequeo anti-fallo
-    no aplica acá: si el CLI de HyperFrames devuelve código 0, el clip es válido."""
-    if not hyperframes_broll._archivo_valido(hyperframes_broll.RUTA_GSAP_VENDOR):
-        raise RuntimeError(f"No se encontró {hyperframes_broll.RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
+    """Dibuja el glifo y lo renderiza a mp4.
 
+    Va con verificar_contenido=False: ese chequeo descarta el clip si el 78%
+    superior del cuadro no llega a un 2% de píxeles encendidos, un umbral
+    pensado para diagramas rellenos (barras, cajas). Un glifo de línea fina
+    (ver plantillas_sello.py) es deliberadamente minimalista y no llega a esa
+    cobertura aunque el render sea perfecto — se verificó a ojo. Al ser HTML
+    propio y determinista (no la respuesta de un modelo que podría venir
+    vacía), ese chequeo anti-fallo no hace falta acá."""
     html = plantillas_sello.construir_html(sello, ancho, alto, duracion)
-    with tempfile.TemporaryDirectory(prefix="estoico_sello_") as tmp:
-        with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
-            f.write(html)
-        shutil.copyfile(hyperframes_broll.RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
-        with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
-            f.write('{"id": "sello", "name": "Sello"}')
-
-        errores = hyperframes_broll._lint(tmp)
-        if errores:
-            raise RuntimeError(errores)
-
-        res = subprocess.run(
-            ["npx", "--yes", f"hyperframes@{hyperframes_broll.VERSION_CLI}", "render"],
-            cwd=tmp, capture_output=True, text=True, timeout=hyperframes_broll.TIMEOUT_RENDER_SEG,
-            env=hyperframes_broll._entorno_cli(),
-        )
-        if res.returncode != 0:
-            detalle = (res.stderr or res.stdout or "").strip()[-2000:]
-            raise RuntimeError(f"hyperframes render falló (código {res.returncode}):\n{detalle}")
-
-        candidatos = glob.glob(os.path.join(tmp, "renders", "*.mp4"))
-        if not candidatos:
-            raise RuntimeError("hyperframes render no generó ningún mp4 en renders/.")
-        ruta_render = max(candidatos, key=os.path.getmtime)
-        shutil.copyfile(ruta_render, ruta_salida)
-    if not _archivo_valido(ruta_salida):
-        raise RuntimeError("El render del sello no produjo un archivo válido.")
+    hyperframes_broll.renderizar_html(
+        html, ruta_salida, nombre="sello", verificar_contenido=False
+    )
 
 
 def _mezclar(ruta_foto_clip, ruta_sello_clip, duracion, ruta_salida):
@@ -153,7 +121,7 @@ def _mezclar(ruta_foto_clip, ruta_sello_clip, duracion, ruta_salida):
          ruta_salida],
         check=True, timeout=60,
     )
-    if not _archivo_valido(ruta_salida):
+    if not archivos.valido(ruta_salida):
         raise RuntimeError("ffmpeg no generó un clip válido al mezclar foto + sello.")
     return ruta_salida
 
@@ -166,7 +134,7 @@ def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2)
     _purgar_nombres_invalidos()
     sello, consulta = plantillas_sello.extraer_sello_y_consulta(plano_texto)
     ruta_salida = _ruta_cache(sello, consulta, aspecto, duracion)
-    if _archivo_valido(ruta_salida):
+    if archivos.valido(ruta_salida):
         return ruta_salida
 
     foto_clip = fondos_stock.generar_clip_cacheado(consulta, aspecto=aspecto, duracion=duracion, reintentos=reintentos)
@@ -182,7 +150,7 @@ def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2)
     # artefacto entero abortó por este único archivo).
     ruta_sello = os.path.join(CARPETA_CACHE, f"sello_{sello}_{ancho}x{alto}_{duracion}.mp4")
     try:
-        if not _archivo_valido(ruta_sello):
+        if not archivos.valido(ruta_sello):
             os.makedirs(CARPETA_CACHE, exist_ok=True)
             _renderizar_sello(sello, ancho, alto, duracion, ruta_sello)
         _mezclar(foto_clip, ruta_sello, duracion, ruta_salida)

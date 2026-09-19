@@ -32,6 +32,7 @@ from google.genai import types as genai_types
 
 import gemini_utils
 import plantillas_broll
+import archivos
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
 VERSION_CLI = "0.8.27"
@@ -423,7 +424,7 @@ def _bloque_correccion(correccion):
     )
 
 
-def _entorno_cli():
+def entorno_cli():
     """Entorno para el CLI en corridas desatendidas: sin telemetría, sin
     comprobación de versión nueva y sin cargar skills. Los nombres de variable
     son los que documenta el propio CLI; se ponen todos porque han cambiado
@@ -476,7 +477,7 @@ def _lint(directorio):
     try:
         res = subprocess.run(
             ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "lint", directorio, "--json"],
-            capture_output=True, text=True, timeout=TIMEOUT_LINT_SEG, env=_entorno_cli(),
+            capture_output=True, text=True, timeout=TIMEOUT_LINT_SEG, env=entorno_cli(),
         )
         salida = res.stdout or ""
         inicio = salida.find("{")
@@ -503,10 +504,6 @@ def _lint(directorio):
     if not errores:
         return None
     return "El linter de HyperFrames reportó errores:\n" + "\n".join(errores[:10])
-
-
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
 
 
 def _limpiar_html(texto):
@@ -598,7 +595,7 @@ def _instalar_chart_story(directorio):
        desaparecía. Estirar los tres a la duración de la escena la deja armada
        hasta el último frame, que es justo el envelope que documenta el
        componente (HOLD = duración - entrada)."""
-    if not _archivo_valido(RUTA_CHART_STORY_VENDOR):
+    if not archivos.valido(RUTA_CHART_STORY_VENDOR):
         return
 
     with open(RUTA_CHART_STORY_VENDOR, "r", encoding="utf-8") as f:
@@ -654,7 +651,7 @@ def _clip_cacheado_utilizable(ruta_clip):
     que salió vacío se reusaría para siempre: la validación del render nunca
     volvería a correr sobre él. Cuando no sirve se borra, y la escena se
     regenera en esta misma corrida."""
-    if not _archivo_valido(ruta_clip):
+    if not archivos.valido(ruta_clip):
         return False
     if _clip_tiene_contenido(ruta_clip):
         return True
@@ -667,17 +664,39 @@ def _clip_cacheado_utilizable(ruta_clip):
     return False
 
 
-def _renderizar_composicion(html, ruta_salida):
-    if not _archivo_valido(RUTA_GSAP_VENDOR):
+def renderizar_html(html, ruta_salida, nombre="escena", verificar_contenido=True,
+                    con_chart_story=False):
+    """Renderiza un documento HyperFrames a mp4 con el CLI y lo deja en ruta_salida.
+
+    La usan los tres motores que dibujan con HyperFrames —este, estoico_broll y
+    curiosidades_broll—, que antes tenían cada uno su copia de esta misma
+    secuencia (armar el proyecto temporal, copiar el GSAP vendorizado, linter,
+    `npx hyperframes render`, recoger el mp4) y llegaban a los privados de este
+    módulo desde afuera para hacerlo.
+
+    Los dos parámetros existen porque ahí está la única diferencia real entre
+    esas copias:
+
+    - `verificar_contenido`: descartar el render si el cuadro quedó vacío
+      (ver _clip_tiene_contenido) solo tiene sentido cuando el HTML lo escribió
+      un modelo y puede venir en blanco. Los glifos y gráficos dibujados por
+      código son deterministas y además de línea fina, así que no llegan al
+      umbral de cobertura de ese chequeo aunque el render sea perfecto: para
+      ellos va en False y basta con que el CLI devuelva 0.
+    - `con_chart_story`: la sub-composición de gráficas solo la usan las
+      composiciones que pide Gemini; las plantillas propias no la referencian.
+    """
+    if not archivos.valido(RUTA_GSAP_VENDOR):
         raise RuntimeError(f"No se encontró {RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
 
-    with tempfile.TemporaryDirectory(prefix="hyperframes_broll_") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"hyperframes_{nombre}_") as tmp:
         with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
             f.write(html)
         shutil.copyfile(RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
-        _instalar_chart_story(tmp)
+        if con_chart_story:
+            _instalar_chart_story(tmp)
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
-            f.write('{"id": "escena", "name": "Escena"}')
+            json.dump({"id": nombre, "name": nombre.capitalize()}, f)
 
         # El linter es barato y el render caro: si la composición incumple el
         # contrato, se sabe en un segundo y no en treinta.
@@ -688,7 +707,7 @@ def _renderizar_composicion(html, ruta_salida):
         res = subprocess.run(
             ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "render"],
             cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
-            env=_entorno_cli(),
+            env=entorno_cli(),
         )
         if res.returncode != 0:
             detalle = (res.stderr or res.stdout or "").strip()[-2000:]
@@ -699,12 +718,14 @@ def _renderizar_composicion(html, ruta_salida):
             raise RuntimeError("hyperframes render no generó ningún mp4 en renders/.")
 
         ruta_render = max(candidatos, key=os.path.getmtime)
-        if not _clip_tiene_contenido(ruta_render):
+        if verificar_contenido and not _clip_tiene_contenido(ruta_render):
             raise RuntimeError(
                 "El clip renderizado quedó vacío (el cuadro no muestra nada sobre el "
                 "fondo). Se descarta para que el reintento genere otra composición."
             )
         shutil.copyfile(ruta_render, ruta_salida)
+    if not archivos.valido(ruta_salida):
+        raise RuntimeError("El render de HyperFrames no produjo un archivo válido.")
 
 
 def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEFAULT, reintentos=2):
@@ -720,8 +741,8 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_TEXTO_DEF
     for intento in range(1, reintentos + 1):
         try:
             html = _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion)
-            _renderizar_composicion(html, ruta_salida)
-            if _archivo_valido(ruta_salida):
+            renderizar_html(html, ruta_salida, con_chart_story=True)
+            if archivos.valido(ruta_salida):
                 return ruta_salida
         except Exception as exc:
             logger.warning(f"HyperFrames intento {intento}/{reintentos} falló: {exc}")
@@ -748,8 +769,8 @@ def _generar_con_plantillas(prompts_visuales, aspecto, rutas):
             html = plantillas_broll.construir_html(
                 prompt, ancho, alto, libre, DURACION_ESCENA_SEG
             )
-            _renderizar_composicion(html, ruta_salida)
-            if _archivo_valido(ruta_salida):
+            renderizar_html(html, ruta_salida)
+            if archivos.valido(ruta_salida):
                 rutas[i] = ruta_salida
         except Exception as exc:
             logger.error(f"Plantilla del plano {i} falló: {exc}")
@@ -815,8 +836,8 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
             for idx, prompt, html in zip(indices, prompts_lote, htmls):
                 ruta_salida = _ruta_cache(prompt, aspecto)
                 try:
-                    _renderizar_composicion(html, ruta_salida)
-                    if _archivo_valido(ruta_salida):
+                    renderizar_html(html, ruta_salida, con_chart_story=True)
+                    if archivos.valido(ruta_salida):
                         rutas[idx] = ruta_salida
                 except Exception as exc:
                     logger.warning(f"Render de la escena {idx} (lote) falló: {exc}")

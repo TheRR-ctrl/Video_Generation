@@ -31,6 +31,7 @@ import logging
 import tempfile
 import subprocess
 
+import archivos
 import hyperframes_broll
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -80,7 +81,7 @@ _PLANTILLA_HTML = """<!doctype html>
 
 
 def _herramientas_disponibles():
-    if not hyperframes_broll._archivo_valido(hyperframes_broll.RUTA_GSAP_VENDOR):
+    if not archivos.valido(hyperframes_broll.RUTA_GSAP_VENDOR):
         logger.warning(f"No se encontró {hyperframes_broll.RUTA_GSAP_VENDOR}; se omite el carve.")
         return False
     if not os.path.isfile(RUTA_CARVE_SCRIPT):
@@ -124,16 +125,14 @@ def mezclar_narracion_musica(ruta_narracion, ruta_musica, duracion_seg, ruta_aud
                 logger.warning(f"Voiceover carve falló, se usará mezcla estática: {(res.stderr or res.stdout or '').strip()[-500:]}")
                 return False
 
-            env = dict(os.environ)
-            env["HYPERFRAMES_SKIP_SKILLS"] = "1"
-            env["HYPERFRAMES_TELEMETRY_DISABLED"] = "1"
             res = subprocess.run(
                 ["npx", "--yes", f"hyperframes@{hyperframes_broll.VERSION_CLI}", "render",
                  "--quality", "draft", "--fps", "24", "-o", "mezcla.mp4"],
-                cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG, env=env,
+                cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
+                env=hyperframes_broll.entorno_cli(),
             )
             ruta_mp4 = os.path.join(tmp, "mezcla.mp4")
-            if res.returncode != 0 or not hyperframes_broll._archivo_valido(ruta_mp4):
+            if res.returncode != 0 or not archivos.valido(ruta_mp4):
                 logger.warning(f"Render de mezcla de audio falló, se usará mezcla estática: {(res.stderr or res.stdout or '').strip()[-500:]}")
                 return False
 
@@ -142,7 +141,7 @@ def mezclar_narracion_musica(ruta_narracion, ruta_musica, duracion_seg, ruta_aud
                  "-i", ruta_mp4, "-vn", "-c:a", "aac", "-b:a", "192k", ruta_audio_salida],
                 capture_output=True, text=True, timeout=120,
             )
-            if res.returncode != 0 or not hyperframes_broll._archivo_valido(ruta_audio_salida):
+            if res.returncode != 0 or not archivos.valido(ruta_audio_salida):
                 logger.warning(f"No se pudo extraer el audio de la mezcla: {(res.stderr or '').strip()[-500:]}")
                 return False
             return True

@@ -20,6 +20,7 @@ from google import genai
 from google.genai import types as genai_types
 
 import presupuesto
+import archivos
 
 MODELO_DEFAULT = "veo-3.0-generate-001"
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
@@ -69,10 +70,6 @@ def _ruta_cache(prompt_visual, aspecto):
     return os.path.join(CARPETA_CACHE, f"veo_{clave}.mp4")
 
 
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
-
-
 def _generar_clip(cliente, prompt_visual, aspecto, modelo, ruta_salida):
     operacion = cliente.models.generate_videos(
         model=modelo,
@@ -107,7 +104,7 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_DEFAULT, 
     """Devuelve la ruta local a un clip de video para el prompt dado,
     generándolo con Veo si no está ya en caché. None si falló."""
     ruta_salida = _ruta_cache(prompt_visual, aspecto)
-    if _archivo_valido(ruta_salida):
+    if archivos.valido(ruta_salida):
         return ruta_salida
 
     # Se comprueba acá y no al importar: un clip que ya está en caché no cuesta
@@ -122,7 +119,7 @@ def generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=MODELO_DEFAULT, 
     for intento in range(1, reintentos + 1):
         try:
             _generar_clip(cliente, prompt_visual, aspecto, modelo, ruta_salida)
-            if _archivo_valido(ruta_salida):
+            if archivos.valido(ruta_salida):
                 return ruta_salida
         except Exception as exc:
             logger.warning(f"Veo intento {intento}/{reintentos} falló: {exc}")

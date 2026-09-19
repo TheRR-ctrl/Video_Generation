@@ -58,11 +58,6 @@ ASPECTO_POR_FORMATO = {
     FORMATO_LARGO: "16:9",
 }
 
-RESOLUCION_POR_FORMATO = {
-    FORMATO_SHORT: (1080, 1920),
-    FORMATO_LARGO: (1920, 1080),
-}
-
 # Ventana de duración objetivo razonable para cada formato, para avisar cuando
 # la de config.json no se corresponde con el formato declarado.
 DURACION_POR_FORMATO = {
@@ -131,10 +126,6 @@ def aspecto_de(cfg):
             f"no se configura aparte."
         )
     return derivado
-
-
-def resolucion_de(cfg):
-    return RESOLUCION_POR_FORMATO[formato_de(cfg)]
 
 
 def limites_duracion(cfg):

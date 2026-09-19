@@ -409,8 +409,8 @@ def _proporcion(plano, ancho, alto_libre, duracion):
         f'{{ strokeDashoffset: {restante:.1f}, duration: 1.1, ease: "power2.inOut" }}, 0.3);',
     ]
     if plano["indice"] == 1:
-        tweens.append(f'tl.fromTo("#centro", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.8);')
-        tweens.append(f'tl.fromTo("#pie", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4 }}, 0.9);')
+        tweens.append('tl.fromTo("#centro", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.8);')
+        tweens.append('tl.fromTo("#pie", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.9);')
     return piezas, tweens
 
 
@@ -606,8 +606,8 @@ def _estructura(plano, ancho, alto_libre, duracion):
     tweens = []
     if es_primer_plano:
         tweens.append(
-            f'tl.fromTo("#nucleo", {{ opacity: 0, scale: 0.7 }}, '
-            f'{{ opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.7)" }}, 0.25);'
+            'tl.fromTo("#nucleo", { opacity: 0, scale: 0.7 }, '
+            '{ opacity: 1, scale: 1, duration: 0.5, ease: "back.out(1.7)" }, 0.25);'
         )
     fila_top = cy + r_centro + int(alto_libre * 0.08)
     util = ancho - 2 * int(ancho * 0.06)

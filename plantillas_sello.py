@@ -219,7 +219,7 @@ def _anillos(ancho, alto, duracion):
         f'style="position:absolute;left:{cx-6}px;top:{cy-6}px;width:12px;height:12px;'
         f'border-radius:50%;background:{ORO};box-shadow:0 0 16px {ORO};"></div>'
     )
-    tweens.append(f'tl.fromTo("#centro", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.3 }}, 0);')
+    tweens.append('tl.fromTo("#centro", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0);')
     return piezas, tweens
 
 

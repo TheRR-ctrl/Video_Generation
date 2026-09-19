@@ -34,7 +34,6 @@ import formatos_canal
 import formato_video
 from google import genai
 from google.genai import types as genai_types
-from google.genai import errors as genai_errors
 from gemini_utils import llamar_con_reintentos
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials

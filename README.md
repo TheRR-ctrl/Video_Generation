@@ -12,9 +12,9 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
 | | video-scout-pipeline | video_generation (este repo) |
 |---|---|---|
 | Fuente de temas | Reddit (RSS público) | Plan de contenido generado con IA, inspirado en canales de referencia de YouTube (RSS público) |
-| Voz | edge-tts (gratis, local) | Gemini TTS |
-| Video de apoyo | Clips propios cortados al azar | Clips generados por escena con Gemini Veo |
-| Formato | Shorts verticales | Video largo horizontal |
+| Voz | edge-tts (gratis, local) | edge-tts o Gemini TTS, configurable |
+| Video de apoyo | Clips propios cortados al azar | Un clip por plano, con el motor que elija `motor_broll` (ver abajo) |
+| Formato | Shorts verticales | Configurable (`formato`); hoy también shorts verticales |
 
 ## Cómo funciona
 
@@ -28,18 +28,19 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
 2. **`script_writer.py`** — convierte cada día pendiente del plan en un guion
    completo dividido en escenas (guion + prompt visual por escena). El estilo
    del prompt visual **depende de `motor_broll`**: descripción filmable en
-   inglés para Veo ("cinematic close-up, morning light"), o concepto a
+   inglés para Veo ("cinematic close-up, morning light"), concepto a
    visualizar en español para los motores que dibujan con código
-   (hyperframes/manim). Esto importa: si se le pide una toma fotorrealista a un
+   (hyperframes/manim), consulta de búsqueda para el motor de fotos, o
+   `[arquetipo] ...` para los motores de identidad fija (estoico,
+   curiosidades). Esto importa: si se le pide una toma fotorrealista a un
    motor de motion graphics, el resultado son formas abstractas con rótulos
    decorativos inventados que no tienen relación con la narración. Al cambiar
    de motor hay que regenerar el guion (input `regenerar_guion` del workflow).
    Salida: `guion.txt`.
 3. **`generar_video_maestro.py`** — por cada escena: genera la locución
-   (`tts_gemini.py`), genera/recicla el clip de video de apoyo según
-   `motor_broll` en `config.json` (`veo_broll.py` con Gemini Veo, o
-   `manim_broll.py` con animación por código — ver abajo), ajusta el clip a
-   la duración real del audio, arma subtítulos karaoke y mezcla música de
+   (`tts_edge.py` o `tts_gemini.py` según `motor_tts`), genera/recicla un clip
+   de video de apoyo por plano según `motor_broll` (ver abajo), ajusta el clip
+   a la duración real del audio, arma subtítulos karaoke y mezcla música de
    fondo. Concatena todas las escenas del día en un video final con ffmpeg.
    Salida: `pipeline_state/resultado_lote.json`.
 4. **`publisher.py`** — chequeo técnico + chequeo de contenido (Gemini), sube
@@ -78,6 +79,9 @@ Variables de entorno:
   `publisher.py`. **Ojo:** la generación de video con Veo consume cuota de
   pago más rápido que las llamadas de texto/voz — revisa los límites de tu
   cuenta antes de correr `pipeline.py` sin supervisión.
+- `PEXELS_API_KEY` — gratis y sin tarjeta en https://www.pexels.com/api/.
+  Solo hace falta con `motor_broll` en `fotos` o `estoico`, que son los que
+  bajan fotos de banco (`fondos_stock.py`).
 - `JAMENDO_CLIENT_ID` — opcional, solo para `actualizar_musica.py` (música de
   fondo). Gratis en https://devportal.jamendo.com/.
 
@@ -87,10 +91,71 @@ modelo de Gemini cambian con el tiempo — confirma los vigentes en
 [ai.google.dev](https://ai.google.dev/gemini-api/docs/models) antes de correr
 el pipeline por primera vez.
 
+## Control de gasto (`presupuesto.py`)
+
+Tope **diario** y duro sobre las tres cosas que consumen cuota de pago: las
+llamadas de texto a Gemini, el TTS de Gemini y los clips de Veo. Los tres
+puntos de gasto pasan por `presupuesto.consumir()` antes de llamar a la API;
+si el día ya llegó al tope, la llamada no se hace y la etapa falla con un
+mensaje claro en vez de gastar.
+
+El contador vive en `pipeline_state/gasto_<fecha>.json`, en disco y no en
+memoria, a propósito: el workflow se relanza varias veces por día durante las
+pruebas, y un contador por proceso se reiniciaría en cada corrida sin frenar
+nada.
+
+Para que se genere un solo clip de Veo hacen falta **dos** permisos
+independientes, y ninguno se activa por descuido:
+
+1. `modo_pruebas: false` en `config.json` (viene en `true`, y mientras lo esté
+   fuerza el tope de video a cero pase lo que pase).
+2. `PERMITIR_VEO=1` en el entorno.
+
+Los topes se configuran en `config.json` con `max_llamadas_texto_por_dia`,
+`max_llamadas_tts_por_dia` y `max_clips_veo_por_dia`.
+
+Además, `pipeline.py` tiene un freno de sobreproducción: si hay
+`UMBRAL_BACKLOG_VIDEOS` (5) videos ya renderizados esperando publicación, se
+saltan las etapas de plan y guion, porque seguir generando solo acumula un
+colchón que no se alcanza a publicar. `--forzar` lo ignora.
+
+## Formatos de canal (`formato_canal` en config.json)
+
+Un `formato_canal` es un paquete con nombre que fija de una sola vez el motor
+de b-roll, el de voz, la carpeta de salida y los hashtags (`formatos_canal.py`),
+además del tono de guion que usan `content_planner.py` y `script_writer.py`.
+Existe porque probar un estilo distinto implicaba acordarse a mano de cuatro
+parámetros sueltos a la vez, y porque sin carpetas separadas dos estilos se
+pisaban los archivos en el mismo `Videos Creados/`.
+
+| formato_canal | De qué va | motor_broll | Voz |
+|---|---|---|---|
+| `psicologia` | Explicador analítico con diagramas dibujados por código | `hyperframes` | Femenina, tono cálido |
+| `emocional` | Reflexión/poesía sobre fotos reales | `fotos` | Masculina, tono neutro |
+| `estoico` | Aforismos sobre dolor y disciplina, con glifo fijo | `estoico` | Masculina, grave |
+| `curiosidades` | Curiosidades científicas con gráficos animados | `curiosidades` | Masculina, entusiasta |
+| `manual` (default) | No toca nada: mandan los campos sueltos de config.json | — | — |
+
+Cada formato tiene su guion semilla escrito a mano (`guion.semilla.txt` para
+psicología, `guion.semilla.<formato>.txt` para los demás), para probar el
+render completo sin gastar una sola llamada a Gemini: inputs
+`usar_guion_semilla` + `archivo_guion_semilla` del workflow, con
+`desde_etapa=video`.
+
+Al cambiar de formato hay que regenerar el plan y el guion
+(`regenerar_plan`), porque el guion viejo trae los prompts visuales con el
+formato del motor anterior.
+
 ## Motor de video de apoyo (`motor_broll` en config.json)
 
-- `"veo"` (default) — Gemini Veo genera video fotorrealista por escena, de
-  pago y lento (minutos por clip).
+Seis motores. Los cinco primeros son gratis; `veo` es el único que cuesta.
+El default efectivo es `"hyperframes"` (lo fija `config.json`, y el workflow
+lo repite como default de su propio input).
+
+- `"veo"` — Gemini Veo genera video fotorrealista por escena, de
+  pago y lento (minutos por clip). Además del costo, exige dos permisos
+  independientes para llegar a correr: `modo_pruebas: false` en config.json
+  **y** `PERMITIR_VEO=1` en el entorno (ver "Control de gasto").
 - `"manim"` — `manim_broll.py` le pide a Gemini el *código* de una escena de
   [Manim](https://www.manim.community/) (motion graphics: líneas, formas,
   texto, estilo grid neón sobre fondo oscuro) y la renderiza localmente.
@@ -128,6 +193,27 @@ el pipeline por primera vez.
   cero — menos renders rotos por HTML/SVG mal generado, y una gráfica con
   mejor terminado. Vendorizada igual que `gsap.min.js` (CDN reemplazado por
   la copia local) para que siga sin depender de red.
+- `"fotos"` — `fondos_stock.py` busca una foto real en
+  [Pexels](https://www.pexels.com/api/) (gratis, requiere `PEXELS_API_KEY`) por
+  cada plano y le aplica un Ken Burns (zoom/paneo lento) para que no quede una
+  imagen congelada. El `VISUAL:` de cada plano es directamente la consulta de
+  búsqueda, en español y de 2-4 palabras. Es el motor del formato emocional.
+- `"estoico"` — `estoico_broll.py` compone dos capas: un **glifo animado por
+  código** (`plantillas_sello.py`: grieta, brasa, circulo, anillos, ascenso) y
+  una foto de Pexels debajo. El glifo se dibuja en blanco/dorado sobre negro
+  puro y se superpone usando su propia luminancia como canal alfa. Da una
+  identidad visual fija y reconocible —el mismo repertorio de glifos en todos
+  los videos— sin pagar por generar una imagen distinta por escena. El
+  `VISUAL:` va como `[arquetipo] palabras de la foto`.
+- `"curiosidades"` — `curiosidades_broll.py` dibuja el cuadro entero por código
+  con `plantillas_curiosidades.py`: cuatro arquetipos de gráfico (`rayo`,
+  `barra`, `onda`, `ruido`) sobre una estética fija de laboratorio nocturno,
+  con lluvia ambiental y reflejo de agua. No usa fotos ni API de imagen, así
+  que es el único motor visual que no necesita ninguna credencial. El `VISUAL:`
+  va como `[arquetipo] descripción. Etiquetas: a, b. Datos: n, n`.
+
+Los tres motores que dibujan con HyperFrames (`hyperframes`, `estoico` y
+`curiosidades`) comparten el mismo render: `hyperframes_broll.renderizar_html()`.
 
 El workflow de GitHub Actions (`.github/workflows/pipeline.yml`) expone
 `motor_broll` como input de `workflow_dispatch`, así que se puede elegir

@@ -137,10 +137,6 @@ def consumir(tipo, cantidad=1, detalle=""):
     return consumo
 
 
-def consumo_de_hoy():
-    return _leer()
-
-
 def resumen_texto():
     """Una línea por tipo, para imprimir al final de la corrida."""
     consumo = _leer()

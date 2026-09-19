@@ -20,13 +20,10 @@ render directo por plano —cacheado en disco, igual que estoico_broll.py— es
 más simple y no gasta cuota.
 """
 import os
-import glob
-import shutil
 import hashlib
 import logging
-import tempfile
-import subprocess
 
+import archivos
 import hyperframes_broll
 import plantillas_curiosidades
 
@@ -40,10 +37,6 @@ CARPETA_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeli
 VERSION_PLANTILLA = "curiosidades-v1"
 
 
-def _archivo_valido(ruta):
-    return bool(ruta) and os.path.isfile(ruta) and os.path.getsize(ruta) > 0
-
-
 def _ruta_cache(plano_texto, ancho, alto, duracion):
     clave = hashlib.sha256(
         f"{VERSION_PLANTILLA}|{ancho}x{alto}|{duracion}|{plano_texto}".encode("utf-8")
@@ -53,43 +46,16 @@ def _ruta_cache(plano_texto, ancho, alto, duracion):
 
 
 def _renderizar(plano_texto, ancho, alto, duracion, ruta_salida):
-    """Render dedicado, igual criterio que estoico_broll._renderizar_sello: es
-    HTML propio y determinista (no la respuesta de un modelo que podría venir
-    vacía), así que un código de salida 0 del CLI de HyperFrames ya confirma
-    que el clip es válido — no hace falta el chequeo de cobertura de píxeles
-    de hyperframes_broll._renderizar_composicion, pensado para diagramas
-    rellenos, no para líneas finas de rayo/onda sobre fondo casi negro."""
-    if not hyperframes_broll._archivo_valido(hyperframes_broll.RUTA_GSAP_VENDOR):
-        raise RuntimeError(f"No se encontró {hyperframes_broll.RUTA_GSAP_VENDOR} (gsap.min.js vendorizado).")
+    """Dibuja el gráfico del plano y lo renderiza a mp4.
 
+    verificar_contenido=False por el mismo motivo que en estoico_broll: el
+    chequeo de cobertura de píxeles está pensado para diagramas rellenos, y
+    descartaría un rayo o una onda de línea fina sobre fondo casi negro aunque
+    el render haya salido perfecto."""
     html = plantillas_curiosidades.construir_html(plano_texto, ancho, alto, duracion)
-    with tempfile.TemporaryDirectory(prefix="curiosidades_") as tmp:
-        with open(os.path.join(tmp, "index.html"), "w", encoding="utf-8") as f:
-            f.write(html)
-        shutil.copyfile(hyperframes_broll.RUTA_GSAP_VENDOR, os.path.join(tmp, "gsap.min.js"))
-        with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
-            f.write('{"id": "curiosidad", "name": "Curiosidad"}')
-
-        errores = hyperframes_broll._lint(tmp)
-        if errores:
-            raise RuntimeError(errores)
-
-        res = subprocess.run(
-            ["npx", "--yes", f"hyperframes@{hyperframes_broll.VERSION_CLI}", "render"],
-            cwd=tmp, capture_output=True, text=True, timeout=hyperframes_broll.TIMEOUT_RENDER_SEG,
-            env=hyperframes_broll._entorno_cli(),
-        )
-        if res.returncode != 0:
-            detalle = (res.stderr or res.stdout or "").strip()[-2000:]
-            raise RuntimeError(f"hyperframes render falló (código {res.returncode}):\n{detalle}")
-
-        candidatos = glob.glob(os.path.join(tmp, "renders", "*.mp4"))
-        if not candidatos:
-            raise RuntimeError("hyperframes render no generó ningún mp4 en renders/.")
-        ruta_render = max(candidatos, key=os.path.getmtime)
-        shutil.copyfile(ruta_render, ruta_salida)
-    if not _archivo_valido(ruta_salida):
-        raise RuntimeError("El render de curiosidades no produjo un archivo válido.")
+    hyperframes_broll.renderizar_html(
+        html, ruta_salida, nombre="curiosidad", verificar_contenido=False
+    )
 
 
 def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2):
@@ -98,7 +64,7 @@ def generar_clip_cacheado(plano_texto, aspecto="9:16", duracion=6, reintentos=2)
     from generar_video_maestro import RESOLUCIONES  # import tardío: evita el ciclo, igual que estoico_broll
     ancho, alto = RESOLUCIONES.get(aspecto, RESOLUCIONES["9:16"])
     ruta_salida = _ruta_cache(plano_texto, ancho, alto, duracion)
-    if _archivo_valido(ruta_salida):
+    if archivos.valido(ruta_salida):
         return ruta_salida
 
     ultimo_error = None

@@ -48,7 +48,6 @@ def videos_pendientes_de_publicar():
     más."""
     try:
         import publisher
-        cfg = publisher.cargar_config()
         completados = publisher.cargar_json(publisher.RUTA_RESULTADO, {}).get("completados", [])
         procesados = (
             {p["ruta"] for p in publisher.cargar_json(publisher.RUTA_PUBLICADOS, [])}
