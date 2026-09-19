@@ -120,18 +120,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Solo lo usa motor_broll=hyperframes (el CLI corre con npx), pero
-      # instalarlo siempre sale gratis en tiempo y evita un fallo tardío si
-      # se lanza el workflow con ese motor.
-      - name: Configurar Node.js (CLI de HyperFrames)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Configurar Node.js (necesario si motor_broll = hyperframes)
+      - name: Configurar Node.js (necesario para hyperframes / estoico / curiosidades)
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -141,7 +133,7 @@ jobs:
         run: npm ci
 
       - name: Precalentar HyperFrames (descarga el paquete y su Chromium una sola vez)
-        if: ${{ github.event.inputs.motor_broll == 'hyperframes' }}
+        if: ${{ contains(fromJSON('["hyperframes","estoico","curiosidades"]'), github.event.inputs.motor_broll) }}
         run: npx --yes hyperframes@0.8.27 --version
 
       - name: Fijar motor de video de apoyo y de narración

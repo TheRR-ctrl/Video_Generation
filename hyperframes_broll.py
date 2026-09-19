@@ -61,6 +61,12 @@ def configurar_motor_composicion(motor):
     return _motor_composicion
 CARPETA_ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_state")
 CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
+# Tope de la caché de clips. La clave lleva el prompt dentro, así que cada
+# plano nuevo añade un archivo y ninguno se borra solo; el workflow además la
+# conserva entre corridas. Cuando se pasa, se borran los menos usados
+# recientemente: a un clip borrado le cuesta un render volver, no es una
+# pérdida.
+CACHE_MAX_MB = 600.0
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
 # Sub-composición del catálogo oficial de HyperFrames (registry/components/
 # chart-story), vendorizada tal cual: construye una gráfica (barras/línea/
@@ -373,6 +379,16 @@ def _ruta_cache(prompt_visual, aspecto):
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
 
 
+def _ruta_parcial(ruta_final):
+    """Dónde se escribe un clip antes de que cuente como bueno.
+
+    Oculto y con otra extensión a propósito: mientras se escribe no debe
+    parecerse a un clip terminado, porque una copia a medias tiene el tamaño
+    de un mp4 de verdad y nada la distinguiría después."""
+    carpeta, nombre = os.path.split(ruta_final)
+    return os.path.join(carpeta, f".{nombre}.parcial")
+
+
 def _mapa_escenas(tamanos_escena, total):
     """Índice de escena al que pertenece cada plano, o None si no se sabe.
 
@@ -451,6 +467,50 @@ def _es_android():
     if "android" in platform.platform().lower():
         return True
     return any(os.path.exists(m) for m in _MARCAS_ANDROID)
+
+
+def limpiar_cache(max_mb=None):
+    """Deja la caché por debajo de `max_mb` borrando los clips menos usados.
+
+    De paso se barren los `.parcial` que dejó un render muerto a mitad."""
+    tope_bytes = float(CACHE_MAX_MB if max_mb is None else max_mb) * 1024 * 1024
+    if not os.path.isdir(CARPETA_CACHE):
+        return 0
+
+    borrados, clips = 0, []
+    for nombre in os.listdir(CARPETA_CACHE):
+        ruta = os.path.join(CARPETA_CACHE, nombre)
+        try:
+            if nombre.endswith(".parcial"):
+                # Nadie lo va a terminar: el proceso que lo escribía ya no está.
+                os.remove(ruta)
+                borrados += 1
+                continue
+            if not os.path.isfile(ruta) or not nombre.endswith(".mp4"):
+                continue
+            st = os.stat(ruta)
+            clips.append((st.st_mtime, st.st_size, ruta))
+        except OSError:
+            continue
+
+    total = sum(c[1] for c in clips)
+    if total <= tope_bytes:
+        return borrados
+
+    # Del que hace más tiempo que no se usa al más reciente: cada acierto de
+    # caché toca el archivo, así que mtime es "última vez que sirvió".
+    for _, tam, ruta in sorted(clips):
+        if total <= tope_bytes:
+            break
+        try:
+            os.remove(ruta)
+        except OSError:
+            continue
+        total -= tam
+        borrados += 1
+    if borrados:
+        logger.info(f"Caché de HyperFrames podada: {borrados} archivo(s) fuera.")
+    return borrados
 
 
 def plataforma_apta():
@@ -719,6 +779,11 @@ def _clip_cacheado_utilizable(ruta_clip):
     if not archivos.valido(ruta_clip):
         return False
     if _clip_tiene_contenido(ruta_clip):
+        # Recién usado, que es por dónde decide limpiar_cache a quién borrar.
+        try:
+            os.utime(ruta_clip, None)
+        except OSError:
+            pass
         return True
 
     logger.warning(f"Clip cacheado vacío, se descarta y se regenera: {ruta_clip}")
@@ -788,7 +853,22 @@ def renderizar_html(html, ruta_salida, nombre="escena", verificar_contenido=True
                 "El clip renderizado quedó vacío (el cuadro no muestra nada sobre el "
                 "fondo). Se descarta para que el reintento genere otra composición."
             )
-        shutil.copyfile(ruta_render, ruta_salida)
+        # Se copia a un archivo aparte y solo al final se mueve al nombre
+        # definitivo, con os.replace, que es atómico. Si el proceso muere a
+        # media copia —un runner que se queda sin tiempo, un portátil que se
+        # suspende— lo que queda es un .parcial que nadie lee, no un mp4
+        # truncado que `archivos.valido` daría por bueno y la caché serviría
+        # para siempre. Vale para los tres motores, que pasan todos por aquí.
+        parcial = _ruta_parcial(ruta_salida)
+        try:
+            shutil.copyfile(ruta_render, parcial)
+            os.replace(parcial, ruta_salida)
+        finally:
+            if os.path.exists(parcial):
+                try:
+                    os.remove(parcial)
+                except OSError:
+                    pass
     if not archivos.valido(ruta_salida):
         raise RuntimeError("El render de HyperFrames no produjo un archivo válido.")
 
@@ -868,7 +948,9 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
             rutas[i] = ruta
 
     if _motor_composicion == "plantillas":
-        return _generar_con_plantillas(prompts_visuales, aspecto, rutas)
+        resultado = _generar_con_plantillas(prompts_visuales, aspecto, rutas)
+        limpiar_cache()
+        return resultado
 
     cliente = _obtener_cliente()
     # Motivo por el que falló cada escena, para dárselo al modelo en el
@@ -919,4 +1001,5 @@ def generar_clips_lote_cacheados(prompts_visuales, aspecto="16:9", modelo=MODELO
         logger.warning(f"Escena {i} sin clip tras los lotes: se reintenta sola.")
         rutas[i] = generar_clip_cacheado(prompt, aspecto=aspecto, modelo=modelo)
 
+    limpiar_cache()
     return rutas
