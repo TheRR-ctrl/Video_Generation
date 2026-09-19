@@ -255,6 +255,14 @@ def generar_clip_cacheado(consulta, aspecto="9:16", duracion=6, reintentos=2):
                 continue
             _ajustar(ruta_fuente, ancho, alto, duracion, ruta_clip)
             _ids_usados.add(elegido["id"])
+            # Queda registrado de qué banco salió y con qué término: es la única
+            # forma de ver desde los logs de una corrida si la segunda fuente
+            # está entrando de verdad (o si falta PIXABAY_API_KEY), y si el
+            # plano se resolvió con la consulta del guion o con un comodín.
+            logger.info(
+                f"Clip de banco: {elegido['id'].split('-')[0]} | término='{termino}'"
+                f"{' (comodín)' if termino != consulta else ''}"
+            )
             return ruta_clip
         except (requests.RequestException, subprocess.SubprocessError, OSError, RuntimeError) as exc:
             logger.warning(f"No se pudo armar el clip de banco para '{termino}': {exc}")
