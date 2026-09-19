@@ -18,6 +18,7 @@
   "duracion_clip_veo_seg": 8,
 
   "motor_broll": "veo",
+  "_motor_broll_opciones": "veo (IA generativa, de pago) | manim (animación por código, gratis) | hyperframes (composición HTML, gratis y a duración exacta)",
 
   "modelo_texto": "gemini-3.6-flash",
   "modelo_tts": "gemini-2.5-flash-preview-tts",
