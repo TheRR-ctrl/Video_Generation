@@ -19,6 +19,8 @@ Credenciales: GEMINI_API_KEY (mismo que el resto del pipeline).
 """
 import os
 import re
+import sys
+import platform
 import json
 import glob
 import shutil
@@ -422,6 +424,69 @@ def _bloque_correccion(correccion):
         "\n\nATENCIÓN: el intento anterior para esta escena falló por lo "
         f"siguiente. Corregilo en esta versión:\n{correccion}"
     )
+
+
+# ---------------------------------------------------------
+# DÓNDE PUEDE CORRER ESTO
+# ---------------------------------------------------------
+# Traído de la copia del motor que vive en video-scout-pipeline (main, fa537d7).
+# Este motor es de PC, a propósito: el render arranca Chrome headless, y el
+# Chrome que descargan las herramientas de Node está compilado contra glibc;
+# Android usa bionic, así que el binario ni siquiera arranca. Encima harían
+# falta Node >= 22, unos cientos de MB de caché de npx y ~3x tiempo real de
+# CPU sostenida — en un teléfono eso es el proceso muriendo a media tarea.
+#
+# Detectarlo acá y decirlo claro es mejor que dejar que lo descubra un
+# subprocess que falla a los diez minutos con un error de enlazado. Quien
+# quiera intentarlo igual (proot con glibc, por ejemplo) tiene la salida de
+# emergencia: HYPERFRAMES_FORZAR=1.
+_MARCAS_ANDROID = ("/data/data/com.termux", "/system/build.prop")
+
+
+def _es_android():
+    if os.environ.get("TERMUX_VERSION") or "com.termux" in (os.environ.get("PREFIX") or ""):
+        return True
+    if hasattr(sys, "getandroidapilevel"):
+        return True
+    if "android" in platform.platform().lower():
+        return True
+    return any(os.path.exists(m) for m in _MARCAS_ANDROID)
+
+
+def plataforma_apta():
+    """(apta, motivo). `motivo` solo tiene sentido cuando no es apta.
+
+    Se consulta antes de gastar una llamada a Gemini o un render: el llamador
+    decide si eso es un error del lote o simplemente caer a otro motor."""
+    if os.environ.get("HYPERFRAMES_FORZAR") == "1":
+        return True, ""
+    if _es_android():
+        return False, (
+            "El motor 'hyperframes' es solo para PC: el render necesita Chrome "
+            "headless (compilado contra glibc, no arranca en Android), Node >= 22 "
+            "y ~3x tiempo real de CPU. Desde el teléfono usá otro motor gratuito "
+            "(videos, fotos, estoico, curiosidades) o dispará el workflow de "
+            "GitHub Actions. Para intentarlo igual: HYPERFRAMES_FORZAR=1."
+        )
+    return True, ""
+
+
+def comprobar_dependencias():
+    """Lanza si falta algo para renderizar. Conviene llamarlo antes del lote
+    para fallar temprano en vez de a mitad del primer video."""
+    apta, motivo = plataforma_apta()
+    if not apta:
+        raise RuntimeError(motivo)
+    if not (os.environ.get("HYPERFRAMES_BIN") or shutil.which("hyperframes") or shutil.which("npx")):
+        raise RuntimeError(
+            "El motor 'hyperframes' necesita Node.js >= 22 (para npx) o el CLI "
+            "instalado. Ver README, sección del motor de video de apoyo."
+        )
+    faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
+    if faltantes:
+        raise RuntimeError(
+            "El motor 'hyperframes' necesita " + ", ".join(faltantes) + " en el PATH."
+        )
 
 
 def entorno_cli():

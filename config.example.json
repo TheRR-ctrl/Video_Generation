@@ -20,7 +20,8 @@
   "aspecto_video": "16:9",
   "duracion_clip_veo_seg": 8,
 
-  "motor_broll": "veo",
+  "motor_broll": "hyperframes",
+  "_motor_broll_opciones": "hyperframes (composición HTML, gratis y a duración exacta) | manim (animación matemática, gratis) | fotos (foto de banco con Ken Burns, gratis) | videos (video real de Pexels/Pixabay, gratis) | estoico (glifo sobre foto, gratis) | curiosidades (visuales por código, gratis) | veo (IA generativa, DE PAGO)",
   "tam_lote_hyperframes": 5,
   "ducking_hyperframes": true,
   "fuerza_carve_musica": 0.3,

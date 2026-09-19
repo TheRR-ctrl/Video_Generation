@@ -75,7 +75,8 @@ abajo), así que el mismo código funciona en ambos lugares sin cambios.
 Variables de entorno:
 
 - `GEMINI_API_KEY` — gratis en https://aistudio.google.com/apikey. La usan
-  `content_planner.py`, `script_writer.py`, `tts_gemini.py`, `veo_broll.py` y
+  `content_planner.py`, `script_writer.py`, `tts_gemini.py`, los tres motores
+  de b-roll (`veo_broll.py`, `manim_broll.py`, `hyperframes_broll.py`) y
   `publisher.py`. **Ojo:** la generación de video con Veo consume cuota de
   pago más rápido que las llamadas de texto/voz — revisa los límites de tu
   cuenta antes de correr `pipeline.py` sin supervisión.
@@ -179,6 +180,18 @@ lo repite como default de su propio input).
   con easings declarativos) que para geometría exacta. Usa GSAP vendorizado
   en `vendor/gsap.min.js` (no CDN, para que el render no dependa de red).
   Requiere Node.js 22+ — ya configurado en el workflow de GitHub Actions.
+
+  **Es un motor de PC** (o de runner de Actions). El render arranca Chrome
+  headless, y el Chrome que baja el CLI está enlazado contra glibc: en Android,
+  que usa bionic, el binario ni arranca. El módulo lo detecta y falla temprano,
+  en `comprobar_dependencias()`, en vez de dejar que reviente un subproceso a
+  mitad de la primera escena. `HYPERFRAMES_FORZAR=1` lo intenta igual, por si
+  alguna vez se monta bajo un proot con glibc. Desde el teléfono, los motores
+  `videos`, `fotos`, `estoico` y `curiosidades` sí corren.
+
+  Para el contrato de composición (`data-start`, `data-duration`,
+  `window.__timelines`), los comandos del CLI y cómo depurar un render fallido,
+  ver `.claude/skills/hyperframes-broll/SKILL.md`.
 
   **Generación por lotes** (`tam_lote_hyperframes`, default 5): en vez de
   una llamada a Gemini por escena, pide el HTML de `tam_lote_hyperframes`

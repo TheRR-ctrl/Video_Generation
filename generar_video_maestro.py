@@ -230,10 +230,14 @@ def ejecutar_comando(cmd, descripcion="Comando", timeout=None, check=True):
     return res
 
 
-def comprobar_dependencias():
+def comprobar_dependencias(cfg=None):
     faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
     if faltantes:
         raise RuntimeError("Faltan dependencias externas: " + ", ".join(faltantes))
+    if cfg and cfg.get("motor_broll") == "hyperframes":
+        # Necesita además Node/npx; mejor saberlo antes del primer render que
+        # a mitad de la primera escena.
+        hyperframes_broll.comprobar_dependencias()
 
 
 class GestorTemporales:
@@ -1050,7 +1054,7 @@ def renderizar_lote_historias(archivo="guion.txt"):
     cfg = cargar_config()
     print("--------------------------------------------------\n🟢 INICIANDO GENERADOR DE VIDEOS\n--------------------------------------------------")
 
-    comprobar_dependencias()
+    comprobar_dependencias(cfg)
 
     if not os.path.exists(archivo):
         print(f"❌ Error: No se encontró '{archivo}'.")
