@@ -178,8 +178,21 @@ jobs:
         if: ${{ github.event.inputs.regenerar_guion == 'true' || github.event.inputs.regenerar_plan == 'true' }}
         run: |
           rm -f guion.txt
-          rm -rf "Videos Creados" pipeline_state/hyperframes_cache pipeline_state/manim_cache
-          echo "Guion, videos y clips cacheados descartados: se reescriben en esta corrida."
+          rm -rf "Videos Creados"
+          # Por patrón y no por nombre: esta lista estaba escrita a mano con
+          # hyperframes_cache y manim_cache, y nunca se actualizó cuando se
+          # sumaron fondos_cache, estoico_cache, curiosidades_cache y
+          # videos_cache. O sea que regenerar_guion=true no regeneraba nada en
+          # cuatro de los seis motores — los clips viejos se restauraban desde
+          # actions/cache y se reusaban igual, y el video salía bien, así que no
+          # se notaba. Con el glob, un motor nuevo queda cubierto solo.
+          #
+          # veo_cache queda AFUERA a propósito: es el único motor de pago, y
+          # borrar sus clips significa volver a generarlos y volver a gastar.
+          # Una casilla que dice "regenerar el guion" no puede costar dinero.
+          find pipeline_state -maxdepth 1 -type d -name "*_cache" \
+            ! -name "veo_cache" -exec rm -rf {} +
+          echo "Guion, videos y clips cacheados descartados (menos veo_cache): se reescriben en esta corrida."
 
       - name: Descartar solo los videos ya montados (regenerar_video)
         if: ${{ github.event.inputs.regenerar_video == 'true' && github.event.inputs.regenerar_guion != 'true' }}
