@@ -111,6 +111,19 @@ el pipeline por primera vez.
   primera vez) y salida a internet durante el render, porque la composición
   carga GSAP desde jsDelivr.
 
+  **Es un motor de PC** (o de runner). El render arranca Chrome headless, y el
+  Chrome que baja el CLI está enlazado contra glibc: en Android, que usa
+  bionic, el binario ni arranca. El módulo lo detecta y falla temprano, en
+  `comprobar_dependencias()`, con un mensaje que lo dice, en vez de dejar que
+  reviente un subproceso a mitad de la primera escena. `HYPERFRAMES_FORZAR=1`
+  lo intenta igual, por si alguna vez se monta bajo un proot con glibc.
+
+  El render es atómico —escribe a un archivo aparte, comprueba con ffprobe
+  que el MP4 se lee y solo entonces lo mueve al nombre de la caché—, así que
+  un proceso muerto a media escritura no deja un clip truncado haciéndose
+  pasar por bueno para siempre. La caché tiene tope (`CACHE_MAX_MB`, 600 MB) y
+  poda los clips menos usados recientemente.
+
   `hyperframes_broll.py` es un módulo portable, idéntico al del repo hermano
   [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pipeline)
   (si lo tocas en uno, cópialo al otro). Lo único que cambia entre pipelines es
