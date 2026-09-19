@@ -9,6 +9,8 @@ un detalle cosmético: cada motor lee algo distinto.
   - hyperframes / manim: concepto a visualizar en español, que el motor dibuja
     por código (diagramas, curvas, comparaciones).
   - fotos: consulta de búsqueda para el banco de fotos (fondos_stock.py).
+  - videos: la misma consulta, pero contra el catálogo de VIDEO de los bancos
+    gratuitos (videos_stock.py), con caída a foto si no hay nada.
   - estoico: "[arquetipo] consulta de foto" — el glifo fijo del formato más la
     foto de fondo sobre la que se mezcla (plantillas_sello.py).
   - curiosidades: "[arquetipo] Etiquetas: ... Datos: ..." — los datos que
@@ -201,6 +203,9 @@ DESC_PLANOS_VISUAL = (
 
 MOTORES_MOTION_GRAPHICS = ("hyperframes", "manim")
 MOTOR_FOTOS = "fotos"
+# Mismo estilo de prompt_visual que "fotos" (una consulta de búsqueda), pero el
+# motor busca video real en vez de foto fija — ver videos_stock.py.
+MOTOR_VIDEOS = "videos"
 MOTOR_ESTOICO = "estoico"
 MOTOR_CURIOSIDADES = "curiosidades"
 
@@ -210,7 +215,7 @@ def construir_schema_guion(motor_broll, formato="largo"):
     es_short = formato == FORMATO_SHORT
     if es_motion:
         descripcion_visual = DESC_VISUAL_MOTION
-    elif motor_broll == MOTOR_FOTOS:
+    elif motor_broll in (MOTOR_FOTOS, MOTOR_VIDEOS):
         descripcion_visual = DESC_VISUAL_FOTOS
     elif motor_broll == MOTOR_ESTOICO:
         descripcion_visual = DESC_VISUAL_ESTOICO
@@ -245,7 +250,7 @@ def construir_schema_guion(motor_broll, formato="largo"):
             "description": DESC_PLANOS_VISUAL.format(min=min_planos, max=max_planos),
         }
         requeridos.append("planos_visuales")
-    elif motor_broll in (MOTOR_FOTOS, MOTOR_ESTOICO, MOTOR_CURIOSIDADES):
+    elif motor_broll in (MOTOR_FOTOS, MOTOR_VIDEOS, MOTOR_ESTOICO, MOTOR_CURIOSIDADES):
         # Antes esto era una sola foto por escena (un corte cada 5-8s, la
         # escena entera): por debajo del estándar real de retención de shorts
         # en 2026, que pide un corte cada 2-4s (fuentes: shortzly.com,

@@ -37,6 +37,7 @@ import tts_edge
 import veo_broll
 import manim_broll
 import fondos_stock
+import videos_stock
 import estoico_broll
 import curiosidades_broll
 import hyperframes_broll
@@ -94,6 +95,7 @@ RESOLUCIONES = {
 # comparten esa firma: piden modelo, o resuelven todos los planos de una.
 MOTORES_POR_PLANO = {
     "fotos": fondos_stock,
+    "videos": videos_stock,
     "estoico": estoico_broll,
     "curiosidades": curiosidades_broll,
 }
@@ -826,6 +828,10 @@ def renderizar_una_historia(bloque, cfg, num=1):
             cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
         )
         motor = cfg.get("motor_broll", CONFIG_DEFAULT["motor_broll"])
+        # La lista de clips de banco ya usados es POR VIDEO: dos escenas del
+        # mismo día no deben caer en el mismo clip, pero el video de mañana sí
+        # puede reusar uno que quedó bien hoy.
+        videos_stock.reiniciar_usados()
         rutas_broll_lote = None
         if motor == "hyperframes":
             # Se piden todos los planos de todas las escenas de una sola vez: el

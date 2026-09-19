@@ -18,6 +18,22 @@ Ejemplos de esto ya hechos: el catálogo de componentes de HyperFrames
 de HyperFrames (voiceover carve / ducking automático) en vez de mezclar con
 ffmpeg después del render.
 
+## Buscar primero en GitHub (regla permanente del usuario)
+
+Antes de ponerte a escribir una funcionalidad nueva de cero para este proyecto
+o para `video-scout-pipeline`, **investigá primero si ya existe algo en GitHub
+que resuelva eso** y decile al usuario qué encontraste. No hace falta adoptar
+el proyecto entero: lo normal es leerle el código, quedarse con la idea o la
+técnica concreta que sirve, y reimplementarla acá en chico. El usuario prefiere
+eso a que reinventemos algo que ya está resuelto y probado afuera.
+
+Referencias que ya se revisaron con este criterio:
+- `gyoridavid/short-video-maker` — de ahí salió buscar VIDEO (no foto) en el
+  banco gratuito, los términos comodín cuando la búsqueda específica vuelve
+  vacía, y no repetir el mismo clip dentro de un video.
+- `harry0703/MoneyPrinterTurbo` — de ahí salió Pixabay como segunda fuente
+  gratuita de video, para no depender de una sola cuota.
+
 ## Control de gastos (regla dura del usuario)
 
 **Estamos en etapa de pruebas y el gasto tiene que estar estrictamente

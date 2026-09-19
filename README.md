@@ -30,7 +30,7 @@ Hermano de [`video-scout-pipeline`](https://github.com/TheRR-ctrl/video-scout-pi
    del prompt visual **depende de `motor_broll`**: descripción filmable en
    inglés para Veo ("cinematic close-up, morning light"), concepto a
    visualizar en español para los motores que dibujan con código
-   (hyperframes/manim), consulta de búsqueda para el motor de fotos, o
+   (hyperframes/manim), consulta de búsqueda para los motores de banco (fotos/videos), o
    `[arquetipo] ...` para los motores de identidad fija (estoico,
    curiosidades). Esto importa: si se le pide una toma fotorrealista a un
    motor de motion graphics, el resultado son formas abstractas con rótulos
@@ -80,8 +80,12 @@ Variables de entorno:
   pago más rápido que las llamadas de texto/voz — revisa los límites de tu
   cuenta antes de correr `pipeline.py` sin supervisión.
 - `PEXELS_API_KEY` — gratis y sin tarjeta en https://www.pexels.com/api/.
-  Solo hace falta con `motor_broll` en `fotos` o `estoico`, que son los que
-  bajan fotos de banco (`fondos_stock.py`).
+  Hace falta con `motor_broll` en `fotos`, `videos` o `estoico`, que son los
+  que bajan material de banco (`fondos_stock.py` / `videos_stock.py`).
+- `PIXABAY_API_KEY` — **opcional**, gratis y sin tarjeta en
+  https://pixabay.com/api/docs/. Es la segunda fuente de video de
+  `motor_broll=videos`, con cuota independiente de la de Pexels. Sin ella el
+  motor funciona igual, solo con menos catálogo donde elegir.
 - `JAMENDO_CLIENT_ID` — opcional, solo para `actualizar_musica.py` (música de
   fondo). Gratis en https://devportal.jamendo.com/.
 
@@ -197,7 +201,16 @@ lo repite como default de su propio input).
   [Pexels](https://www.pexels.com/api/) (gratis, requiere `PEXELS_API_KEY`) por
   cada plano y le aplica un Ken Burns (zoom/paneo lento) para que no quede una
   imagen congelada. El `VISUAL:` de cada plano es directamente la consulta de
-  búsqueda, en español y de 2-4 palabras. Es el motor del formato emocional.
+  búsqueda, en español y de 2-4 palabras.
+- `"videos"` — `videos_stock.py` hace lo mismo que `fotos` pero contra el
+  catálogo de **video** de Pexels y Pixabay: en vez de una foto fija con zoom,
+  el plano es metraje real con movimiento propio. Lee el mismo `VISUAL:` que
+  `fotos`, así que se puede cambiar de uno al otro sin reescribir el guion. Si
+  ninguna de las dos fuentes devuelve nada para la consulta, prueba con
+  términos comodín (`naturaleza`, `cielo`, `océano`...) y recién después cae a
+  `fondos_stock`, así que en el peor caso da exactamente lo que daba `fotos`.
+  Además no repite el mismo clip dos veces dentro del mismo video. Es el motor
+  recomendado para el formato emocional.
 - `"estoico"` — `estoico_broll.py` compone dos capas: un **glifo animado por
   código** (`plantillas_sello.py`: grieta, brasa, circulo, anillos, ascenso) y
   una foto de Pexels debajo. El glifo se dibuja en blanco/dorado sobre negro

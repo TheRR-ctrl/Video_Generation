@@ -14,7 +14,11 @@ name: Pipeline de contenido
 #   1. Secrets del repo (Settings -> Secrets and variables -> Actions):
 #        GEMINI_API_KEY        - API key de https://aistudio.google.com/apikey
 #        PEXELS_API_KEY        - gratis en https://www.pexels.com/api/, sin tarjeta.
-#                                 Solo hace falta con motor_broll=fotos (fondos_stock.py).
+#                                 Hace falta con motor_broll=fotos, =videos y =estoico.
+#        PIXABAY_API_KEY       - OPCIONAL, gratis en https://pixabay.com/api/docs/.
+#                                 Segunda fuente de video para motor_broll=videos:
+#                                 cuota aparte de la de Pexels. Sin ella el motor
+#                                 funciona igual, solo con menos catálogo.
 #        YOUTUBE_CLIENT_SECRET - contenido de tu client_secret.json (OAuth desktop)
 #        YOUTUBE_TOKEN         - contenido de youtube_token.json ya autorizado
 #                                 una vez en tu máquina (ver README)
@@ -61,11 +65,11 @@ on:
         # de default, una corrida disparada sin tocar este campo (por API, o
         # dándole a Run workflow de una) se va a Veo y quema la cuota diaria sin
         # ejecutar nada de HyperFrames: pasó en la corrida 34003101637.
-        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; fotos = banco Pexels con Ken Burns, gratis; estoico = glifo animado + foto por doble exposición, gratis; curiosidades = gráficos animados por código (rayo/barra/onda/ruido), gratis; veo = IA generativa, con cuota)"
+        description: "Motor de video de apoyo (hyperframes/manim = animación por código, gratis; fotos = foto de banco con Ken Burns, gratis; videos = VIDEO real de banco (Pexels/Pixabay), gratis; estoico = glifo animado + foto por doble exposición, gratis; curiosidades = gráficos animados por código (rayo/barra/onda/ruido), gratis; veo = IA generativa, con cuota)"
         required: false
         default: "hyperframes"
         type: choice
-        options: ["hyperframes", "manim", "fotos", "estoico", "curiosidades", "veo"]
+        options: ["hyperframes", "manim", "fotos", "videos", "estoico", "curiosidades", "veo"]
       motor_tts:
         description: "Motor de narración (edge = gratis sin límite; gemini = tope de 10 solicitudes/día)"
         required: false
@@ -202,6 +206,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
         run: |
           python pipeline.py \
             --desde "${{ github.event.inputs.desde_etapa || 'plan' }}" \

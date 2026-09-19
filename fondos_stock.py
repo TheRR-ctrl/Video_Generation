@@ -81,7 +81,7 @@ _RELLENO = {
 }
 
 
-def _limpiar_consulta(texto):
+def limpiar_consulta(texto):
     """Pexels busca mejor con 2-4 palabras concretas que con una frase larga:
     una consulta tipo oración le devuelve resultados genéricos o vacíos."""
     texto = re.sub(r"[^\w\sáéíóúñ]", " ", texto, flags=re.I)
@@ -92,7 +92,7 @@ def _limpiar_consulta(texto):
 def buscar_foto_cacheada(consulta, aspecto="9:16", reintentos=2):
     """Devuelve la ruta local a una foto para la consulta dada, bajándola de
     Pexels si no está ya en caché. None si falló."""
-    consulta = _limpiar_consulta(consulta)
+    consulta = limpiar_consulta(consulta)
     ruta_salida = _ruta_cache(consulta, aspecto)
     if archivos.valido(ruta_salida):
         return ruta_salida
@@ -158,7 +158,7 @@ def clip_desde_foto(ruta_foto, ancho, alto, duracion, ruta_salida, fps=30):
 def generar_clip_cacheado(consulta, aspecto="9:16", duracion=6, reintentos=2):
     """Punto de entrada equivalente a hyperframes_broll/veo_broll/manim_broll:
     devuelve la ruta a un clip de video para la consulta dada, o None."""
-    clave = hashlib.sha256(f"{aspecto}|{duracion}|{_limpiar_consulta(consulta)}".encode("utf-8")).hexdigest()[:24]
+    clave = hashlib.sha256(f"{aspecto}|{duracion}|{limpiar_consulta(consulta)}".encode("utf-8")).hexdigest()[:24]
     os.makedirs(CARPETA_CACHE, exist_ok=True)
     ruta_clip = os.path.join(CARPETA_CACHE, f"clip_{clave}.mp4")
     if archivos.valido(ruta_clip):
