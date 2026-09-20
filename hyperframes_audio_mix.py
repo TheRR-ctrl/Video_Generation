@@ -126,8 +126,8 @@ def mezclar_narracion_musica(ruta_narracion, ruta_musica, duracion_seg, ruta_aud
                 return False
 
             res = subprocess.run(
-                ["npx", "--yes", f"hyperframes@{hyperframes_broll.VERSION_CLI}", "render",
-                 "--quality", "draft", "--fps", "24", "-o", "mezcla.mp4"],
+                hyperframes_broll.comando_cli() + [
+                    "render", "--quality", "draft", "--fps", "24", "-o", "mezcla.mp4"],
                 cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
                 env=hyperframes_broll.entorno_cli(),
             )

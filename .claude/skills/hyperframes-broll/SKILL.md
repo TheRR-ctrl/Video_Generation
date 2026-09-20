@@ -32,16 +32,25 @@ datos. Para un plano fotorrealista concreto, sigue siendo un modelo generativo.
 
 ## El módulo de este repo
 
-`hyperframes_broll.py`.
+El motor está partido en dos archivos:
+
+- **`hyperframes_nucleo.py`** — byte a byte idéntico en `video_generation` y en
+  `video-scout-pipeline`. **Si lo tocas en uno, copialo al otro.** Lleva lo que
+  no depende de qué se dibuja: la puerta de plataforma (`plataforma_apta`), el
+  comando y el entorno del CLI, el linter, y la caché en disco (escritura
+  atómica, marcado de uso, poda LRU).
+- **`hyperframes_broll.py`** — distinto en cada repo **a propósito**.
 
 > **Nota de este repo.** Esta skill llegó desde `video-scout-pipeline`, donde
 > `hyperframes_broll.py` compone un clip por escena con `PerfilVisual` y
-> duración exacta. En `video_generation` el módulo divergió: genera el HTML de
-> varias escenas en **una sola llamada** a Gemini
-> (`generar_clips_lote_cacheados`, `tam_lote_hyperframes`) para no agotar la
-> cuota diaria de texto, y no tiene `PerfilVisual` ni `duracion_seg`. El
-> contrato de composición, las reglas de determinismo, los comandos del CLI y
-> los fallos típicos de más abajo valen igual en los dos.
+> duración exacta. Acá el módulo divergió: genera el HTML de varias escenas en
+> **una sola llamada** a Gemini (`generar_clips_lote_cacheados`,
+> `tam_lote_hyperframes`) para no agotar la cuota diaria de texto, y no tiene
+> `PerfilVisual` ni `duracion_seg`. No intentes volver a igualarlos: se
+> separaron en septiembre y unificarlos rompería uno de los dos pipelines; el
+> núcleo es lo único compartido. El contrato de composición, las reglas de
+> determinismo, los comandos del CLI y los fallos típicos de más abajo valen
+> igual en los dos.
 
 ```python
 generar_clip_cacheado(prompt_visual, aspecto="16:9", modelo=..., reintentos=3,

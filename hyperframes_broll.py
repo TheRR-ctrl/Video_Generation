@@ -18,9 +18,6 @@ para que el render sea reproducible en el tiempo.
 Credenciales: GEMINI_API_KEY (mismo que el resto del pipeline).
 """
 import os
-import re
-import sys
-import platform
 import json
 import glob
 import shutil
@@ -35,9 +32,21 @@ from google.genai import types as genai_types
 import gemini_utils
 import plantillas_broll
 import archivos
+import hyperframes_nucleo as nucleo
+
+# Reexportados porque son interfaz de este módulo: hyperframes_audio_mix y los
+# motores hermanos llaman a hyperframes_broll.entorno_cli() sin tener que saber
+# que el que la implementa es el núcleo. Se asignan en vez de importarse para
+# que pyflakes no los dé por imports sin usar.
+VERSION_CLI = nucleo.VERSION_CLI
+RESOLUCIONES = nucleo.RESOLUCIONES
+CACHE_MAX_MB = nucleo.CACHE_MAX_MB
+TIMEOUT_RENDER_SEG = nucleo.TIMEOUT_RENDER_SEG
+TIMEOUT_LINT_SEG = nucleo.TIMEOUT_LINT_SEG
+comando_cli = nucleo.comando_cli
+entorno_cli = nucleo.entorno_cli
 
 MODELO_TEXTO_DEFAULT = "gemini-3.6-flash"
-VERSION_CLI = "0.8.27"
 # La capa gratuita de Gemini limita las solicitudes de generate_content por
 # día (no solo por minuto): pedir el HTML de varias escenas en una sola
 # llamada, en vez de una llamada por escena, es lo que hace viable generar
@@ -66,7 +75,6 @@ CARPETA_CACHE = os.path.join(CARPETA_ESTADO, "hyperframes_cache")
 # conserva entre corridas. Cuando se pasa, se borran los menos usados
 # recientemente: a un clip borrado le cuesta un render volver, no es una
 # pérdida.
-CACHE_MAX_MB = 600.0
 RUTA_GSAP_VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "gsap.min.js")
 # Sub-composición del catálogo oficial de HyperFrames (registry/components/
 # chart-story), vendorizada tal cual: construye una gráfica (barras/línea/
@@ -98,20 +106,6 @@ LUMINANCIA_MINIMA_CONTENIDO = 40
 # más, y los que solo tienen un título flotando llegan a 1.5%.
 COBERTURA_MINIMA_CONTENIDO = 0.02
 # Generoso a propósito: la primera vez que corre en una máquina/runner nuevo,
-# `npx hyperframes@version` tiene que descargar el paquete completo (incluye
-# un Chromium vía Puppeteer) antes de renderizar nada. Un render en caliente
-# tarda ~20-30s (ver prueba local); esto solo cubre ese arranque en frío.
-TIMEOUT_RENDER_SEG = 600
-# El linter no abre navegador; el margen cubre el arranque en frío de npx.
-TIMEOUT_LINT_SEG = 180
-
-RESOLUCIONES = {
-    "16:9": (1920, 1080),
-    "9:16": (1080, 1920),
-    "1:1": (1080, 1080),
-}
-
-
 def _escala_chart_story(ancho, alto):
     """Trozo de CSS extra para el div de chart-story, o cadena vacía.
 
@@ -379,16 +373,6 @@ def _ruta_cache(prompt_visual, aspecto):
     return os.path.join(CARPETA_CACHE, f"hf_{clave}.mp4")
 
 
-def _ruta_parcial(ruta_final):
-    """Dónde se escribe un clip antes de que cuente como bueno.
-
-    Oculto y con otra extensión a propósito: mientras se escribe no debe
-    parecerse a un clip terminado, porque una copia a medias tiene el tamaño
-    de un mp4 de verdad y nada la distinguiría después."""
-    carpeta, nombre = os.path.split(ruta_final)
-    return os.path.join(carpeta, f".{nombre}.parcial")
-
-
 def _mapa_escenas(tamanos_escena, total):
     """Índice de escena al que pertenece cada plano, o None si no se sabe.
 
@@ -442,200 +426,43 @@ def _bloque_correccion(correccion):
     )
 
 
-# ---------------------------------------------------------
-# DÓNDE PUEDE CORRER ESTO
-# ---------------------------------------------------------
-# Traído de la copia del motor que vive en video-scout-pipeline (main, fa537d7).
-# Este motor es de PC, a propósito: el render arranca Chrome headless, y el
-# Chrome que descargan las herramientas de Node está compilado contra glibc;
-# Android usa bionic, así que el binario ni siquiera arranca. Encima harían
-# falta Node >= 22, unos cientos de MB de caché de npx y ~3x tiempo real de
-# CPU sostenida — en un teléfono eso es el proceso muriendo a media tarea.
+# La decisión de dónde puede correr esto la toma el núcleo (resumen: el render
+# arranca Chrome headless, compilado contra glibc, que en Android ni enlaza).
+# Lo que se agrega acá es la salida concreta de ESTE pipeline.
 #
-# Detectarlo acá y decirlo claro es mejor que dejar que lo descubra un
-# subprocess que falla a los diez minutos con un error de enlazado. Quien
-# quiera intentarlo igual (proot con glibc, por ejemplo) tiene la salida de
-# emergencia: HYPERFRAMES_FORZAR=1.
-_MARCAS_ANDROID = ("/data/data/com.termux", "/system/build.prop")
-
-
-def _es_android():
-    if os.environ.get("TERMUX_VERSION") or "com.termux" in (os.environ.get("PREFIX") or ""):
-        return True
-    if hasattr(sys, "getandroidapilevel"):
-        return True
-    if "android" in platform.platform().lower():
-        return True
-    return any(os.path.exists(m) for m in _MARCAS_ANDROID)
-
-
-def limpiar_cache(max_mb=None):
-    """Deja la caché por debajo de `max_mb` borrando los clips menos usados.
-
-    De paso se barren los `.parcial` que dejó un render muerto a mitad."""
-    tope_bytes = float(CACHE_MAX_MB if max_mb is None else max_mb) * 1024 * 1024
-    if not os.path.isdir(CARPETA_CACHE):
-        return 0
-
-    borrados, clips = 0, []
-    for nombre in os.listdir(CARPETA_CACHE):
-        ruta = os.path.join(CARPETA_CACHE, nombre)
-        try:
-            if nombre.endswith(".parcial"):
-                # Nadie lo va a terminar: el proceso que lo escribía ya no está.
-                os.remove(ruta)
-                borrados += 1
-                continue
-            if not os.path.isfile(ruta) or not nombre.endswith(".mp4"):
-                continue
-            st = os.stat(ruta)
-            clips.append((st.st_mtime, st.st_size, ruta))
-        except OSError:
-            continue
-
-    total = sum(c[1] for c in clips)
-    if total <= tope_bytes:
-        return borrados
-
-    # Del que hace más tiempo que no se usa al más reciente: cada acierto de
-    # caché toca el archivo, así que mtime es "última vez que sirvió".
-    for _, tam, ruta in sorted(clips):
-        if total <= tope_bytes:
-            break
-        try:
-            os.remove(ruta)
-        except OSError:
-            continue
-        total -= tam
-        borrados += 1
-    if borrados:
-        logger.info(f"Caché de HyperFrames podada: {borrados} archivo(s) fuera.")
-    return borrados
+# Ojo con el consejo: `estoico` y `curiosidades` NO son alternativas, pasan por
+# este mismo render (ver MOTORES_CON_HYPERFRAMES en generar_video_maestro).
+_SALIDA_EN_ESTE_REPO = (
+    " En este pipeline: usá un motor que solo baje archivos (videos, fotos), o "
+    "disparalo desde GitHub Actions, que sí corre en un runner de PC."
+)
 
 
 def plataforma_apta():
-    """(apta, motivo). `motivo` solo tiene sentido cuando no es apta.
-
-    Se consulta antes de gastar una llamada a Gemini o un render: el llamador
-    decide si eso es un error del lote o simplemente caer a otro motor."""
-    if os.environ.get("HYPERFRAMES_FORZAR") == "1":
+    """(apta, motivo), con el consejo propio de este repo pegado al motivo."""
+    apta, motivo = nucleo.plataforma_apta()
+    if apta:
         return True, ""
-    if _es_android():
-        return False, (
-            "El motor 'hyperframes' es solo para PC: el render necesita Chrome "
-            "headless (compilado contra glibc, no arranca en Android), Node >= 22 "
-            "y ~3x tiempo real de CPU. Desde el teléfono usá otro motor gratuito "
-            "(videos, fotos, estoico, curiosidades) o dispará el workflow de "
-            "GitHub Actions. Para intentarlo igual: HYPERFRAMES_FORZAR=1."
-        )
-    return True, ""
+    return False, motivo + _SALIDA_EN_ESTE_REPO
+
+
+def limpiar_cache(max_mb=None):
+    """Poda la caché de este pipeline. El trabajo lo hace el núcleo; aquí solo
+    se fija de qué carpeta se trata."""
+    return nucleo.limpiar_cache(CARPETA_CACHE, max_mb)
 
 
 def comprobar_dependencias():
     """Lanza si falta algo para renderizar. Conviene llamarlo antes del lote
-    para fallar temprano en vez de a mitad del primer video."""
+    para fallar temprano en vez de a mitad del primer video.
+
+    A diferencia del repo hermano, aquí no hay motor de respaldo al que caer:
+    si esto no puede renderizar, el video no sale, así que conviene que reviente
+    antes de gastar la cuota de texto del día."""
     apta, motivo = plataforma_apta()
     if not apta:
         raise RuntimeError(motivo)
-    if not (os.environ.get("HYPERFRAMES_BIN") or shutil.which("hyperframes") or shutil.which("npx")):
-        raise RuntimeError(
-            "El motor 'hyperframes' necesita Node.js >= 22 (para npx) o el CLI "
-            "instalado. Ver README, sección del motor de video de apoyo."
-        )
-    faltantes = [exe for exe in ("ffmpeg", "ffprobe") if shutil.which(exe) is None]
-    if faltantes:
-        raise RuntimeError(
-            "El motor 'hyperframes' necesita " + ", ".join(faltantes) + " en el PATH."
-        )
-
-
-def entorno_cli():
-    """Entorno para el CLI en corridas desatendidas: sin telemetría, sin
-    comprobación de versión nueva y sin cargar skills. Los nombres de variable
-    son los que documenta el propio CLI; se ponen todos porque han cambiado
-    entre versiones y sobra con que alguna coincida."""
-    env = dict(os.environ)
-    env.update({
-        "HYPERFRAMES_SKIP_SKILLS": "1",
-        "HYPERFRAMES_TELEMETRY_DISABLED": "1",
-        "HYPERFRAMES_NO_TELEMETRY": "1",
-        "DO_NOT_TRACK": "1",
-        "HYPERFRAMES_NO_UPDATE_CHECK": "1",
-    })
-    return env
-
-
-def _hallazgo_del_modelo(hallazgo, directorio):
-    """¿El hallazgo del linter es sobre el HTML que escribió Gemini?
-
-    Todo lo que no sea el index.html del directorio (o sea: las
-    sub-composiciones que ponemos nosotros) es nuestro y el modelo no puede
-    arreglarlo; pasárselo como corrección solo ensucia el reintento. Sin
-    ruta en el hallazgo se asume que sí, para no tragarse errores reales."""
-    ruta = hallazgo.get("file") or hallazgo.get("filePath")
-    if not ruta:
-        return True
-    return os.path.basename(ruta) == "index.html"
-
-
-def _lint(directorio):
-    """Errores que reporta el linter del CLI, o None si la composición está
-    limpia.
-
-    Técnica tomada de la rama claude/video-analysis-generation-1zyqq4, que
-    resolvió el mismo motor en paralelo. `hyperframes lint` no abre navegador y
-    tarda ~1s, contra los 20-30s de un render: atrapa los incumplimientos del
-    contrato (timeline sin registrar, CDN externo, data-duration fuera de rango)
-    antes de pagar un render que iba a fallar igual. Y devuelve un `fixHint` por
-    error, que es lo que se le pasa al modelo en el reintento.
-
-    Solo cuentan los hallazgos del index.html, que es lo único que escribió
-    Gemini. El linter recorre el directorio entero, y ahí adentro también está
-    nuestro `compositions/chart-story.html` vendorizado, que a propósito no
-    declara data-width/data-height —llena la caja que le da el anfitrión, lo
-    documenta su propio encabezado— y por eso siempre reporta
-    root_missing_dimensions. Con ese error contando como propio, TODA
-    composición quedaba rechazada por algo que Gemini no escribió y no podía
-    arreglar: la corrida 33995064364 se quedó sin un solo clip, con ese hallazgo
-    repetido en cada intento. Medido: lint sobre index.html solo = 0 errores;
-    el mismo index.html con chart-story al lado = 1 error, el de chart-story."""
-    try:
-        res = subprocess.run(
-            ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "lint", directorio, "--json"],
-            capture_output=True, text=True, timeout=TIMEOUT_LINT_SEG, env=entorno_cli(),
-        )
-        salida = res.stdout or ""
-        inicio = salida.find("{")
-        if inicio < 0:
-            return None  # sin JSON parseable: que decida el render
-        datos = json.loads(salida[inicio:])
-    except Exception as exc:
-        logger.debug(f"lint no utilizable, se sigue al render: {exc}")
-        return None
-
-    if not datos.get("errorCount"):
-        return None
-
-    errores = []
-    for hallazgo in datos.get("findings", []):
-        if hallazgo.get("severity") != "error":
-            continue
-        if not _hallazgo_del_modelo(hallazgo, directorio):
-            continue
-        linea = f"- {hallazgo.get('code', 'error')}: {hallazgo.get('message', '')}"
-        if hallazgo.get("fixHint"):
-            linea += f"\n  Cómo se arregla: {hallazgo['fixHint']}"
-        errores.append(linea)
-    if not errores:
-        return None
-    return "El linter de HyperFrames reportó errores:\n" + "\n".join(errores[:10])
-
-
-def _limpiar_html(texto):
-    texto = texto.strip()
-    texto = re.sub(r'^```(?:html)?\s*', '', texto)
-    texto = re.sub(r'\s*```$', '', texto)
-    return texto.strip()
+    nucleo.comprobar_dependencias()
 
 
 def _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion=None):
@@ -655,7 +482,7 @@ def _generar_composicion(cliente, prompt_visual, aspecto, modelo, correccion=Non
             + _bloque_correccion(correccion)
         ),
     )
-    html = _limpiar_html(respuesta.text or "")
+    html = nucleo.limpiar_html(respuesta.text or "")
     if "id=\"root\"" not in html or "__timelines" not in html:
         raise ValueError("La respuesta de Gemini no cumple el contrato de HyperFrames.")
     return html
@@ -697,13 +524,21 @@ def _generar_composiciones_lote(cliente, prompts_visuales, aspecto, modelo, corr
     if not isinstance(datos, list) or len(datos) != n:
         raise ValueError(f"Se esperaban {n} composiciones en el array JSON, llegaron {datos if not isinstance(datos, list) else len(datos)}.")
 
-    htmls = [_limpiar_html(h) for h in datos]
+    htmls = [nucleo.limpiar_html(h) for h in datos]
     for html in htmls:
         if "id=\"root\"" not in html or "__timelines" not in html:
             raise ValueError("Una composición del lote no cumple el contrato de HyperFrames.")
     return htmls
 
 
+# Nota para cuando falle el linter: `nucleo.hallazgo_del_modelo` descarta todo
+# hallazgo que no sea del index.html, y esta función es la razón. chart-story
+# no declara data-width/data-height a propósito —llena la caja que le da el
+# anfitrión, lo documenta su propio encabezado— así que siempre reporta
+# root_missing_dimensions. Medido: lint sobre index.html solo = 0 errores; el
+# mismo index.html con chart-story al lado = 1 error, el de chart-story. Sin el
+# filtro, TODA composición quedaba rechazada por algo que Gemini no escribió:
+# la corrida 33995064364 se quedó sin un solo clip.
 def _instalar_chart_story(directorio):
     """Copia la sub-composición chart-story dentro del proyecto temporal, en
     compositions/ y con su duración estirada a la del clip.
@@ -780,10 +615,7 @@ def _clip_cacheado_utilizable(ruta_clip):
         return False
     if _clip_tiene_contenido(ruta_clip):
         # Recién usado, que es por dónde decide limpiar_cache a quién borrar.
-        try:
-            os.utime(ruta_clip, None)
-        except OSError:
-            pass
+        nucleo.marcar_usado(ruta_clip)
         return True
 
     logger.warning(f"Clip cacheado vacío, se descarta y se regenera: {ruta_clip}")
@@ -830,12 +662,12 @@ def renderizar_html(html, ruta_salida, nombre="escena", verificar_contenido=True
 
         # El linter es barato y el render caro: si la composición incumple el
         # contrato, se sabe en un segundo y no en treinta.
-        errores = _lint(tmp)
+        errores = nucleo.lint(tmp)
         if errores:
             raise RuntimeError(errores)
 
         res = subprocess.run(
-            ["npx", "--yes", f"hyperframes@{VERSION_CLI}", "render"],
+            nucleo.comando_cli() + ["render"],
             cwd=tmp, capture_output=True, text=True, timeout=TIMEOUT_RENDER_SEG,
             env=entorno_cli(),
         )
@@ -859,16 +691,8 @@ def renderizar_html(html, ruta_salida, nombre="escena", verificar_contenido=True
         # suspende— lo que queda es un .parcial que nadie lee, no un mp4
         # truncado que `archivos.valido` daría por bueno y la caché serviría
         # para siempre. Vale para los tres motores, que pasan todos por aquí.
-        parcial = _ruta_parcial(ruta_salida)
-        try:
+        with nucleo.escritura_atomica(ruta_salida) as parcial:
             shutil.copyfile(ruta_render, parcial)
-            os.replace(parcial, ruta_salida)
-        finally:
-            if os.path.exists(parcial):
-                try:
-                    os.remove(parcial)
-                except OSError:
-                    pass
     if not archivos.valido(ruta_salida):
         raise RuntimeError("El render de HyperFrames no produjo un archivo válido.")
 
