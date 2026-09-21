@@ -215,6 +215,16 @@ lo repite como default de su propio input).
   cada plano y le aplica un Ken Burns (zoom/paneo lento) para que no quede una
   imagen congelada. El `VISUAL:` de cada plano es directamente la consulta de
   búsqueda, en español y de 2-4 palabras.
+
+  Pide **40 candidatas** por consulta y elige una con azar sembrado por la
+  propia consulta: la misma consulta resuelve siempre a la misma foto (si no,
+  la caché en disco no serviría de nada), pero consultas distintas dan fotos
+  distintas. Tampoco repite una foto dentro del mismo video. Antes pedía
+  `per_page=1`, o sea que Pexels devolvía siempre la única primera foto: dos
+  videos que compartieran una línea `VISUAL:` —y en un formato reflexivo
+  "atardecer solitario" se repite— salían con la imagen idéntica. El id de
+  Pexels va dentro del nombre del archivo en caché, para poder atribuir y para
+  que una foto servida desde caché también cuente como usada.
 - `"videos"` — `videos_stock.py` hace lo mismo que `fotos` pero contra el
   catálogo de **video** de Pexels y Pixabay: en vez de una foto fija con zoom,
   el plano es metraje real con movimiento propio. Lee el mismo `VISUAL:` que

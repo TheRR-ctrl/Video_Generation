@@ -841,10 +841,15 @@ def renderizar_una_historia(bloque, cfg, num=1):
             cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
         )
         motor = cfg.get("motor_broll", CONFIG_DEFAULT["motor_broll"])
-        # La lista de clips de banco ya usados es POR VIDEO: dos escenas del
-        # mismo día no deben caer en el mismo clip, pero el video de mañana sí
-        # puede reusar uno que quedó bien hoy.
+        # La lista de material de banco ya usado es POR VIDEO: dos escenas del
+        # mismo día no deben caer en el mismo clip ni en la misma foto, pero el
+        # video de mañana sí puede reusar uno que quedó bien hoy.
+        #
+        # Los dos, no solo videos_stock: fondos_stock lo usa el motor "fotos" y
+        # también la capa de foto del motor "estoico", así que sin este reinicio
+        # la variedad se quedaría atascada entre videos de la misma corrida.
         videos_stock.reiniciar_usados()
+        fondos_stock.reiniciar_usados()
         rutas_broll_lote = None
         if motor == "hyperframes":
             # Se piden todos los planos de todas las escenas de una sola vez: el
