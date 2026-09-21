@@ -29,7 +29,9 @@ import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
 
+import ruido     # calla los avisos del SDK de Google que aquí no dicen nada
 import env_local  # noqa: F401 (carga .env si existe)
+import titulos
 import formatos_canal
 import formato_video
 from google import genai
@@ -69,6 +71,7 @@ CONFIG_DEFAULT = {
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+ruido.callar_sdk_google()   # los avisos de AFC del SDK, que aquí no aplican
 logger = logging.getLogger("publisher")
 
 
@@ -185,7 +188,7 @@ def generar_metadata_plantilla(titulo, cuerpo, cfg):
     return {
         "aprobado": aprobado,
         "motivo_rechazo": "" if aprobado else "Falta título o guion.",
-        "titulo_youtube": titulo[:100],
+        "titulo_youtube": titulos.recortar_titulo(titulo),
         "descripcion_youtube": f"{titulo}\n\n{cuerpo.strip()}"[:4900],
         "hashtags": list(cfg.get("hashtags_base") or DEFAULT_HASHTAGS)[:6],
     }
@@ -268,7 +271,7 @@ def construir_descripcion(metadata, video, cfg=None, duracion_seg=None):
 def subir_video(servicio, ruta_video, metadata, video, cfg, publish_at_iso):
     body = {
         "snippet": {
-            "title": metadata["titulo_youtube"][:100],
+            "title": titulos.recortar_titulo(metadata["titulo_youtube"]),
             "description": construir_descripcion(metadata, video, cfg, duracion_video(ruta_video)),
             "tags": metadata["hashtags"],
             "categoryId": cfg["categoria_youtube"],

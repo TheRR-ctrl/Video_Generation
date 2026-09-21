@@ -29,6 +29,7 @@ import time
 import json
 import logging
 
+import ruido     # calla los avisos del SDK de Google que aquí no dicen nada
 import env_local  # noqa: F401 (carga .env si existe)
 import formatos_canal
 import formato_video
@@ -445,6 +446,7 @@ lo que se está narrando, no una decoración abstracta que acompaña:
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+ruido.callar_sdk_google()   # los avisos de AFC del SDK, que aquí no aplican
 logger = logging.getLogger("script_writer")
 
 

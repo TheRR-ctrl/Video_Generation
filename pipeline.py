@@ -21,16 +21,23 @@ colchón que no se alcanza a publicar, gastando cuota de Gemini y tiempo de
 render para nada. Antes de las etapas "plan" y "guion" se cuentan los videos ya
 renderizados que siguen sin publicar ni rechazar; si llegan a
 UMBRAL_BACKLOG_VIDEOS, esas dos etapas se saltan solas. --forzar la ignora.
+
+Revisión de calidad (también tomada de video-scout-pipeline): al terminar la
+etapa de video se mide con ffmpeg lo que se acaba de renderizar —volumen,
+silencios, negros, congelados, formato, narración truncada— y se deja escrito
+en pipeline_state/calidad.json. Avisa, no frena: ver revisar_lo_renderizado().
 """
 import sys
 import argparse
 import logging
 import traceback
 
+import ruido     # calla los avisos del SDK de Google que aquí no dicen nada
 import env_local  # noqa: F401 (carga .env si existe, antes de cualquier otro import)
 import presupuesto
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+ruido.callar_sdk_google()   # los avisos de AFC del SDK, que aquí no aplican
 logger = logging.getLogger("pipeline")
 
 ETAPAS = ["plan", "guion", "video", "publicar"]
@@ -57,6 +64,38 @@ def videos_pendientes_de_publicar():
     except Exception as exc:
         logger.warning(f"No se pudo calcular el colchón pendiente ({exc}); no se frena la generación.")
         return 0
+
+
+def revisar_lo_renderizado():
+    """Mide lo que acaba de salir del render, antes de que se publique.
+
+    NO frena la publicación, a propósito — misma decisión que en
+    video-scout-pipeline, y por el mismo motivo: estas corridas las dispara
+    GitHub Actions y no las mira nadie en vivo, así que un umbral mal puesto
+    dejaría el canal parado sin que nadie se entere. Lo que hace es dejarlo
+    medido en pipeline_state/calidad.json y escribir en el log los que tienen
+    algo roto, que es donde se mira cuando un video sale mal.
+
+    Es gratis y sin red: son medidas de ffmpeg sobre un archivo que ya está
+    en disco. No toca ninguna cuota.
+    """
+    try:
+        import calidad
+        nuevas = calidad.revisar_pendientes()
+    except Exception as exc:
+        logger.warning(f"No se pudo revisar la calidad ({exc}); la corrida sigue.")
+        return
+
+    if not nuevas:
+        logger.info("Calidad: nada nuevo que medir.")
+        return
+
+    rotos = [e for e in nuevas if e["fallos"]]
+    logger.info(f"Calidad: {len(nuevas)} revisado(s), {len(rotos)} con algo que arreglar.")
+    for e in rotos:
+        for h in e["hallazgos"]:
+            if h["nivel"] == "fallo":
+                logger.warning(f"  {e['titulo'][:40]}: {h['que']}")
 
 
 def correr_etapa(nombre, fn):
@@ -120,6 +159,7 @@ def main():
         resultados["video (generar_video_maestro)"] = correr_etapa(
             "video (generar_video_maestro)", generar_video_maestro.renderizar_lote_historias
         )
+        revisar_lo_renderizado()
 
     if i_desde <= ETAPAS.index("publicar") <= i_hasta:
         import publisher
