@@ -215,6 +215,16 @@ lo repite como default de su propio input).
   cada plano y le aplica un Ken Burns (zoom/paneo lento) para que no quede una
   imagen congelada. El `VISUAL:` de cada plano es directamente la consulta de
   búsqueda, en español y de 2-4 palabras.
+
+  Pide **40 candidatas** por consulta y elige una con azar sembrado por la
+  propia consulta: la misma consulta resuelve siempre a la misma foto (si no,
+  la caché en disco no serviría de nada), pero consultas distintas dan fotos
+  distintas. Tampoco repite una foto dentro del mismo video. Antes pedía
+  `per_page=1`, o sea que Pexels devolvía siempre la única primera foto: dos
+  videos que compartieran una línea `VISUAL:` —y en un formato reflexivo
+  "atardecer solitario" se repite— salían con la imagen idéntica. El id de
+  Pexels va dentro del nombre del archivo en caché, para poder atribuir y para
+  que una foto servida desde caché también cuente como usada.
 - `"videos"` — `videos_stock.py` hace lo mismo que `fotos` pero contra el
   catálogo de **video** de Pexels y Pixabay: en vez de una foto fija con zoom,
   el plano es metraje real con movimiento propio. Lee el mismo `VISUAL:` que
@@ -322,6 +332,47 @@ corre manualmente o con su propio cron cada tanto. Atribución guardada en
 `pipeline_state/musica_atribucion.json` y créditada automáticamente en la
 descripción del video por `publisher.py`.
 
+## Revisión de calidad (`calidad.py`)
+
+Tomado de `video-scout-pipeline`. Mide con ffmpeg el mp4 ya renderizado, antes
+de que se suba, y deja el resultado en `pipeline_state/calidad.json`. Se corre
+solo al terminar la etapa de video; también a mano:
+
+```bash
+python calidad.py                   # los que aún no se han revisado
+python calidad.py --todos           # otra vez, todos
+python calidad.py --solo 3          # solo el día 3
+python calidad.py --archivo v.mp4   # un archivo suelto, sin registro
+```
+
+Qué mira, todo en **una sola pasada** de ffmpeg (cada pasada es descodificar
+el video entero, y cuatro filtros en la misma cadena cuestan lo mismo que uno):
+
+| Hallazgo | Qué detecta |
+|---|---|
+| `sin_audio` / `mudo` | El mp4 salió sin pista de audio, o con una en silencio absoluto |
+| `narracion_corta` | El video dura mucho menos de lo que predice el número de palabras del guion: el TTS entregó menos texto del que se le dio |
+| `volumen` / `pico` | Los LUFS quedaron lejos de los −14 que normaliza YouTube, o el pico va a saturar al recodificar |
+| `silencio_inicio` / `silencio_largo` | Arranca mudo (ahí se decide si alguien se queda), o hay un hueco de 2.5s en medio |
+| `negro_inicio` / `negro` | Empieza en negro —que es además el fotograma que YouTube ofrece como miniatura— o hay un corte a negro entre dos clips |
+| `congelado` | La imagen se quedó parada: el clip de apoyo se acabó antes que la narración |
+| `formato` | La resolución no corresponde a la duración medida (ver `formato_video.py`) |
+
+**Avisa, no frena.** La publicación sigue aunque haya fallos, a propósito: las
+corridas las dispara GitHub Actions y no las mira nadie en vivo, así que un
+umbral mal puesto dejaría el canal parado sin que nadie se entere. Los fallos
+salen en el log de la corrida.
+
+Es gratis y sin red: son medidas de ffmpeg sobre un archivo que ya está en
+disco, así que no toca ninguna cuota y se revisan todos los videos, no una
+muestra. Lo que **no** hace es predecir si el video va a funcionar; que no
+tenga defectos no hace que el feed lo reparta.
+
+Los consejos de arreglo apuntan a `volumen_locucion` y `volumen_musica`, que
+son claves reales de `config.json` (1.0 y 0.08 por defecto): antes el volumen
+de la mezcla estaba escrito a mano dentro del `filter_complex` del render, y
+un consejo que apunta a un número inalcanzable no sirve de nada.
+
 ## Publicación en YouTube
 
 Para subir a YouTube necesitas un OAuth "Desktop app" client de Google Cloud
@@ -333,6 +384,13 @@ Recuerda poner el consent screen de tu proyecto de Google Cloud en estado
 **"In production"** (sin necesidad de verificación completa) — si se queda en
 "Testing", el refresh token expira a los 7 días y rompe una corrida
 desatendida cada semana.
+
+El título se recorta con `titulos.py` (copiado tal cual de
+`video-scout-pipeline`): YouTube corta a 100 caracteres y rechaza `<` y `>`, y
+Gemini no siempre respeta el límite que se le pide. Antes era un `titulo[:100]`
+seco, que parte la palabra por la mitad; ahora corta en un separador natural
+(`—`, `:`, `|`) si deja al menos media frase, y si no, por palabras y cerrando
+con `…`, soltando las que dejarían la frase colgando.
 
 ## Corriendo el pipeline
 

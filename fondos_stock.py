@@ -23,6 +23,8 @@ Requiere: PEXELS_API_KEY (gratis en https://www.pexels.com/api/, sin tarjeta).
 import os
 import re
 import time
+import glob
+import random
 import hashlib
 import logging
 import subprocess
@@ -41,7 +43,40 @@ TIMEOUT_SEG = 20
 # agotarlo en una corrida con muchas escenas sin coordinación entre ellas.
 PAUSA_ENTRE_PEDIDOS_SEG = 1.0
 
+# Cuántas fotos pedirle a Pexels por consulta, para tener entre qué elegir.
+# Estuvo en 1 desde el principio, y eso quería decir que Pexels devolvía
+# SIEMPRE la misma foto: dos videos que compartieran una línea VISUAL: —y en
+# un formato reflexivo "atardecer solitario" se repite— salían con la imagen
+# idéntica, sin que nadie lo hubiera elegido. Mismo número que usa
+# videos_stock, por el mismo motivo.
+CANDIDATOS_POR_PEDIDO = 40
+
+# Fotos ya usadas en el video que se está armando. Igual que en videos_stock:
+# vive en memoria y se limpia al empezar cada video, porque el objetivo es la
+# variedad DENTRO de un video, no prohibir para siempre una foto que quedó
+# bien.
+_ids_usados = set()
+
 _ultimo_pedido = 0.0
+
+
+def reiniciar_usados():
+    """Limpia la lista de fotos ya usadas. El maestro la llama al empezar cada
+    video: la restricción de no repetir es por video, no por corrida."""
+    _ids_usados.clear()
+
+
+def _elegir(fotos, consulta):
+    """Elige una de las fotos con azar sembrado por la consulta.
+
+    Sembrado y no `random.choice` a secas para que la elección sea
+    reproducible: la misma consulta tiene que resolver a la misma foto en cada
+    corrida, si no la caché en disco no sirve de nada y cada corrida vuelve a
+    descargar. Si todas están usadas ya, se permite repetir antes que dejar el
+    plano sin imagen.
+    """
+    disponibles = [f for f in fotos if f["id"] not in _ids_usados] or fotos
+    return random.Random(consulta).choice(disponibles)
 
 
 class SinAPIKey(RuntimeError):
@@ -67,10 +102,36 @@ def _limitar_ritmo():
     _ultimo_pedido = time.time()
 
 
-def _ruta_cache(consulta, aspecto):
-    clave = hashlib.sha256(f"{aspecto}|{consulta}".encode("utf-8")).hexdigest()[:24]
+def _clave_cache(consulta, aspecto):
+    return hashlib.sha256(f"{aspecto}|{consulta}".encode("utf-8")).hexdigest()[:24]
+
+
+def _ruta_cache(consulta, aspecto, id_foto):
+    """El id de Pexels va DENTRO del nombre, no solo el hash de la consulta.
+
+    Dos motivos. Uno: al servir desde caché hace falta saber qué foto es para
+    anotarla como usada — si no, la lista de no-repetir solo vería las que se
+    bajaron en esta corrida y sería ciega a las demás. Dos: deja ver de un
+    vistazo de qué foto de Pexels salió cada archivo, que es lo que hace falta
+    para atribuir.
+    """
     os.makedirs(CARPETA_CACHE, exist_ok=True)
-    return os.path.join(CARPETA_CACHE, f"foto_{clave}.jpg")
+    return os.path.join(CARPETA_CACHE, f"foto_{_clave_cache(consulta, aspecto)}_{id_foto}.jpg")
+
+
+def _cacheada(consulta, aspecto):
+    """(ruta, id_foto) de la foto ya bajada para esta consulta, o (None, None).
+
+    Se busca por el hash de la consulta y se lee el id del propio nombre. Si
+    quedaran varias (no debería: la consulta resuelve siempre a la misma foto),
+    se toma la primera por orden, para que el resultado no dependa de cómo
+    devuelva el sistema de archivos.
+    """
+    patron = os.path.join(CARPETA_CACHE, f"foto_{_clave_cache(consulta, aspecto)}_*.jpg")
+    for ruta in sorted(glob.glob(patron)):
+        if archivos.valido(ruta):
+            return ruta, os.path.basename(ruta).rsplit("_", 1)[1].rsplit(".", 1)[0]
+    return None, None
 
 
 # Palabras de relleno que no aportan nada a una búsqueda de fotos y solo le
@@ -93,13 +154,17 @@ def buscar_foto_cacheada(consulta, aspecto="9:16", reintentos=2):
     """Devuelve la ruta local a una foto para la consulta dada, bajándola de
     Pexels si no está ya en caché. None si falló."""
     consulta = limpiar_consulta(consulta)
-    ruta_salida = _ruta_cache(consulta, aspecto)
-    if archivos.valido(ruta_salida):
-        return ruta_salida
+    ruta_cacheada, id_cacheado = _cacheada(consulta, aspecto)
+    if ruta_cacheada:
+        # Anotarla igual: si no, una foto servida desde caché no contaría como
+        # usada y otro plano del mismo video podría volver a elegirla.
+        _ids_usados.add(id_cacheado)
+        return ruta_cacheada
 
     orientacion = "portrait" if aspecto == "9:16" else "landscape" if aspecto == "16:9" else "square"
     headers = {"Authorization": _api_key()}
-    params = {"query": consulta, "orientation": orientacion, "per_page": 1, "size": "large"}
+    params = {"query": consulta, "orientation": orientacion,
+              "per_page": CANDIDATOS_POR_PEDIDO, "size": "large"}
 
     for intento in range(1, reintentos + 1):
         try:
@@ -110,14 +175,21 @@ def buscar_foto_cacheada(consulta, aspecto="9:16", reintentos=2):
             if not fotos:
                 logger.warning(f"Pexels no devolvió fotos para '{consulta}'.")
                 return None
+            elegida = _elegir(fotos, consulta)
+            ruta_salida = _ruta_cache(consulta, aspecto, elegida["id"])
             # 'large2x' da buena resolución para 1080p sin bajar el original
             # entero (varios MB) que no hace falta para un short.
-            url_imagen = fotos[0]["src"].get("large2x") or fotos[0]["src"]["original"]
+            url_imagen = elegida["src"].get("large2x") or elegida["src"]["original"]
             img = requests.get(url_imagen, timeout=TIMEOUT_SEG)
             img.raise_for_status()
             with open(ruta_salida, "wb") as f:
                 f.write(img.content)
             if archivos.valido(ruta_salida):
+                _ids_usados.add(elegida["id"])
+                logger.info(
+                    f"Foto de banco: pexels {elegida['id']} | consulta='{consulta}' "
+                    f"| {len(fotos)} candidata(s)"
+                )
                 return ruta_salida
         except requests.RequestException as exc:
             logger.warning(f"Pexels intento {intento}/{reintentos} falló para '{consulta}': {exc}")

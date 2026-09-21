@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 from datetime import timedelta
 
+import ruido     # calla los avisos del SDK de Google que aquí no dicen nada
 import env_local  # noqa: F401 (carga .env si existe)
 import archivos
 import formatos_canal
@@ -68,6 +69,13 @@ CONFIG_DEFAULT = {
     "voz_masculina_edge": tts_edge.VOZ_FALLBACK_MASCULINA,
     "voz_femenina_edge": tts_edge.VOZ_FALLBACK_FEMENINA,
     "reintentar_existentes": False,
+    # El volumen de la mezcla estática, que hasta ahora estaba escrito a mano
+    # dentro del filter_complex. Sale afuera porque calidad.py mide los LUFS
+    # del mp4 terminado y aconseja subir o bajar: un consejo que apunta a un
+    # número inalcanzable no sirve de nada. Mismos nombres que en
+    # video-scout-pipeline, que ya los tenía así.
+    "volumen_locucion": 1.0,
+    "volumen_musica": 0.08,
     "ducking_hyperframes": True,
     "fuerza_carve_musica": hyperframes_audio_mix.FUERZA_CARVE_DEFAULT,
 }
@@ -182,6 +190,7 @@ ESCALA_BASE_X = 88
 FACTOR_RESALTADO = 1.35
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+ruido.callar_sdk_google()   # los avisos de AFC del SDK, que aquí no aplican
 logger = logging.getLogger("video_maestro")
 
 
@@ -832,10 +841,15 @@ def renderizar_una_historia(bloque, cfg, num=1):
             cfg.get("motor_composicion", hyperframes_broll.MOTOR_COMPOSICION_DEFAULT)
         )
         motor = cfg.get("motor_broll", CONFIG_DEFAULT["motor_broll"])
-        # La lista de clips de banco ya usados es POR VIDEO: dos escenas del
-        # mismo día no deben caer en el mismo clip, pero el video de mañana sí
-        # puede reusar uno que quedó bien hoy.
+        # La lista de material de banco ya usado es POR VIDEO: dos escenas del
+        # mismo día no deben caer en el mismo clip ni en la misma foto, pero el
+        # video de mañana sí puede reusar uno que quedó bien hoy.
+        #
+        # Los dos, no solo videos_stock: fondos_stock lo usa el motor "fotos" y
+        # también la capa de foto del motor "estoico", así que sin este reinicio
+        # la variedad se quedaría atascada entre videos de la misma corrida.
         videos_stock.reiniciar_usados()
+        fondos_stock.reiniciar_usados()
         rutas_broll_lote = None
         if motor == "hyperframes":
             # Se piden todos los planos de todas las escenas de una sola vez: el
@@ -1004,9 +1018,12 @@ def renderizar_una_historia(bloque, cfg, num=1):
         )
         if usar_musica_estatica:
             fade_inicio = max(0.0, dur_total - 2.0)
+            vol_loc = float(cfg.get("volumen_locucion", CONFIG_DEFAULT["volumen_locucion"]))
+            vol_mus = float(cfg.get("volumen_musica", CONFIG_DEFAULT["volumen_musica"]))
             fc = (
                 f"{pre_ass}ass='{f_ass}'[vout];"
-                f"[1:a]volume=1.0[av];[3:a]volume=0.08,afade=t=out:st={fade_inicio:.2f}:d=2[am];"
+                f"[1:a]volume={vol_loc}[av];"
+                f"[3:a]volume={vol_mus},afade=t=out:st={fade_inicio:.2f}:d=2[am];"
                 f"[av][am]amix=inputs=2:duration=first[aout]"
             )
             cmd_ff = ["ffmpeg", "-hide_banner", "-y", "-i", video_concat, "-i", audio_narracion,

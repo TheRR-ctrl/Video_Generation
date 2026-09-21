@@ -30,6 +30,8 @@
   ],
   "tam_lote_hyperframes": 5,
   "ducking_hyperframes": true,
+  "volumen_locucion": 1.0,
+  "volumen_musica": 0.08,
   "fuerza_carve_musica": 0.3,
   "modelo_texto": "gemini-3.6-flash",
   "modelo_tts": "gemini-2.5-flash-preview-tts",
